@@ -1,0 +1,6 @@
+{
+  "name": "Civilense",
+  "description": "Community-driven civic improvement platform for reporting neighbourhood issues, tracking verified progress, and participating in local restoration initiatives.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
