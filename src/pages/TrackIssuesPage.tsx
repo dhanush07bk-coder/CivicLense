@@ -6,10 +6,12 @@ import {
   MapPin,
   Search,
   ShieldCheck,
+  Users,
   X,
 } from 'lucide-react';
 import {
   CivicIssue,
+  CommunityInitiative,
   IssueCategory,
   IssueStatus,
   PageRoute,
@@ -23,11 +25,15 @@ import {
 import { StatusBadge } from '../components/StatusBadge';
 import { ResilientImage } from '../components/ResilientImage';
 import { BeforeAfterSlider } from '../components/BeforeAfterSlider';
+import { ModalDialog } from '../components/ModalDialog';
+import { IndiaLocationFilterBar } from '../components/IndiaLocationFilterBar';
 
 interface TrackIssuesPageProps {
   issues: CivicIssue[];
-  initialSelectedId?: string | null;
-  onClearInitialSelected?: () => void;
+  initiatives: CommunityInitiative[];
+  selectedIssueId: string | null;
+  onSelectIssueId: (issueId: string | null) => void;
+  onSelectInitiative: (initiativeId: string) => void;
   onNavigate: (route: PageRoute) => void;
 }
 
@@ -48,8 +54,10 @@ function formatShortDate(iso: string): string {
 
 export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
   issues,
-  initialSelectedId,
-  onClearInitialSelected,
+  initiatives,
+  selectedIssueId,
+  onSelectIssueId,
+  onSelectInitiative,
   onNavigate,
 }) => {
   const [query, setQuery] = useState('');
@@ -58,9 +66,6 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
   const [stateFilter, setStateFilter] = useState<string>('All');
   const [cityFilter, setCityFilter] = useState<string>('All');
   const [viewMode, setViewMode] = useState<'cards' | 'table'>('cards');
-  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(
-    initialSelectedId ?? null,
-  );
 
   const indiaIssues = useMemo(
     () => issues.filter(assertValidIndiaIssueRecord),
@@ -92,22 +97,29 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
     [indiaIssues, query, categoryFilter, statusFilter, stateFilter, cityFilter],
   );
 
-  const activeIssueId = selectedIssueId ?? initialSelectedId ?? null;
   const activeIssue: PublicCivicIssue | null = useMemo(() => {
-    if (!activeIssueId) return null;
+    if (!selectedIssueId) return null;
     const match = filterIssues(indiaIssues, {
       query: '',
       category: 'All',
       status: 'All',
       state: 'All',
       city: 'All',
-    }).find((item) => item.id === activeIssueId);
+    }).find(
+      (item) => item.id.toLowerCase() === selectedIssueId.trim().toLowerCase(),
+    );
     return match ?? null;
-  }, [indiaIssues, activeIssueId]);
+  }, [indiaIssues, selectedIssueId]);
+
+  const linkedInitiatives = useMemo(() => {
+    if (!activeIssue) return [];
+    return initiatives.filter((init) =>
+      init.linkedIssueIds?.includes(activeIssue.id),
+    );
+  }, [initiatives, activeIssue]);
 
   const closeDetailModal = () => {
-    setSelectedIssueId(null);
-    onClearInitialSelected?.();
+    onSelectIssueId(null);
   };
 
   const hasActiveFilters =
@@ -173,45 +185,23 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
             />
           </div>
 
-          <div className="md:col-span-3">
-            <label htmlFor="track-state" className="sr-only">
-              Filter by Indian state
-            </label>
-            <select
-              id="track-state"
-              value={stateFilter}
-              onChange={(e) => {
-                setStateFilter(e.target.value);
+          <div className="flex flex-wrap gap-3 md:col-span-6">
+            <IndiaLocationFilterBar
+              embedded
+              stateFilter={stateFilter}
+              cityFilter={cityFilter}
+              availableStates={availableStates}
+              availableCities={availableCities}
+              onStateChange={setStateFilter}
+              onCityChange={setCityFilter}
+              onReset={() => {
+                setStateFilter('All');
                 setCityFilter('All');
               }}
-              className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 text-sm text-[#06271A] focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-            >
-              <option value="All">All Indian States / UTs</option>
-              {availableStates.map((st) => (
-                <option key={st} value={st}>
-                  {st}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="md:col-span-3">
-            <label htmlFor="track-city" className="sr-only">
-              Filter by Indian city
-            </label>
-            <select
-              id="track-city"
-              value={cityFilter}
-              onChange={(e) => setCityFilter(e.target.value)}
-              className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 text-sm text-[#06271A] focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-            >
-              <option value="All">All Cities</option>
-              {availableCities.map((ct) => (
-                <option key={ct} value={ct}>
-                  {ct}
-                </option>
-              ))}
-            </select>
+              stateId="track-state"
+              cityId="track-city"
+              allCitiesLabel="All Cities"
+            />
           </div>
 
           {/* Cards vs Table Switch */}
@@ -310,18 +300,25 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
       {filteredIssues.length === 0 ? (
         <div className="rounded-2xl border border-[#B5D8C7] bg-white p-12 text-center space-y-3">
           <p className="font-display text-lg font-bold text-[#06271A]">
-            No matching Indian civic reports found
+            {indiaIssues.length === 0
+              ? 'No Indian civic reports submitted yet'
+              : 'No matching Indian civic reports found'}
           </p>
           <p className="text-sm text-[#254B33]">
-            Try clearing your state, city, or status filter, or submit a new
-            observation.
+            {indiaIssues.length === 0
+              ? 'Submit the first neighbourhood observation so coordinators and volunteers can verify and act.'
+              : 'Try clearing your state, city, or status filter, or submit a new observation.'}
           </p>
           <button
             type="button"
-            onClick={resetFilters}
+            onClick={
+              indiaIssues.length === 0
+                ? () => onNavigate('report')
+                : resetFilters
+            }
             className="inline-flex min-h-[40px] items-center rounded-lg border border-[#5E9185] bg-[#F5FAF7] px-4 py-2 text-sm font-semibold text-[#254B33]"
           >
-            Reset Filters
+            {indiaIssues.length === 0 ? 'Report New Issue' : 'Reset Filters'}
           </button>
         </div>
       ) : viewMode === 'cards' ? (
@@ -377,7 +374,7 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
 
                 <button
                   type="button"
-                  onClick={() => setSelectedIssueId(issue.id)}
+                  onClick={() => onSelectIssueId(issue.id)}
                   className="inline-flex min-h-[40px] items-center rounded-lg border border-[#254B33] bg-[#F5FAF7] px-3.5 py-1.5 text-xs font-semibold text-[#254B33] transition-colors hover:bg-[#254B33] hover:text-white whitespace-nowrap"
                 >
                   View Timeline
@@ -425,7 +422,7 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
                   <td className="px-4 py-3 text-right">
                     <button
                       type="button"
-                      onClick={() => setSelectedIssueId(issue.id)}
+                      onClick={() => onSelectIssueId(issue.id)}
                       className="rounded-md border border-[#5E9185] px-3 py-1.5 text-xs font-semibold text-[#254B33] hover:bg-[#254B33] hover:text-white whitespace-nowrap"
                     >
                       Open
@@ -438,183 +435,212 @@ export const TrackIssuesPage: React.FC<TrackIssuesPageProps> = ({
         </div>
       )}
 
-      {/* Report Detail Modal */}
+      {/* Accessible Report Detail Modal synced with ?id= query param */}
       {activeIssue && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="issue-detail-title"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#06271A]/55 p-4 backdrop-blur-xs"
+        <ModalDialog
+          onClose={closeDetailModal}
+          labelledBy="issue-detail-title"
+          maxWidthClass="max-w-3xl"
         >
-          <div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-[#B5D8C7] bg-white p-6 sm:p-8 space-y-6">
-            <div className="flex items-start justify-between gap-4 border-b border-[#B5D8C7]/60 pb-4">
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2.5">
-                  <span className="font-mono-tabular text-xs font-semibold text-[#5E9185]">
-                    {activeIssue.id}
-                  </span>
-                  <span aria-hidden="true" className="text-[#9CCCCC]">
-                    ·
-                  </span>
-                  <span className="text-xs font-medium text-[#254B33]">
-                    {activeIssue.category}
-                  </span>
-                  <StatusBadge status={activeIssue.status} compact />
-                </div>
-                <h2
-                  id="issue-detail-title"
-                  className="font-display text-xl font-bold text-[#06271A] sm:text-2xl"
-                >
-                  {activeIssue.title}
-                </h2>
+          <div className="flex items-start justify-between gap-4 border-b border-[#B5D8C7]/60 pb-4">
+            <div className="space-y-1.5">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <span className="font-mono-tabular text-xs font-semibold text-[#5E9185]">
+                  {activeIssue.id}
+                </span>
+                <span aria-hidden="true" className="text-[#9CCCCC]">
+                  ·
+                </span>
+                <span className="text-xs font-medium text-[#254B33]">
+                  {activeIssue.category}
+                </span>
+                <StatusBadge status={activeIssue.status} compact />
               </div>
-
-              <button
-                type="button"
-                onClick={closeDetailModal}
-                aria-label="Close report details"
-                className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#B5D8C7] text-[#06271A] hover:bg-[#F5FAF7]"
+              <h2
+                id="issue-detail-title"
+                className="font-display text-xl font-bold text-[#06271A] sm:text-2xl"
               >
-                <X className="h-5 w-5" aria-hidden="true" />
-              </button>
+                {activeIssue.title}
+              </h2>
             </div>
 
-            <div className="space-y-4">
-              <p className="text-sm leading-relaxed text-[#254B33]">
-                {activeIssue.description}
-              </p>
+            <button
+              type="button"
+              onClick={closeDetailModal}
+              aria-label="Close report details"
+              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#B5D8C7] text-[#06271A] hover:bg-[#F5FAF7]"
+            >
+              <X className="h-5 w-5" aria-hidden="true" />
+            </button>
+          </div>
 
-              <div className="grid gap-2 rounded-xl border border-[#B5D8C7]/70 bg-[#F5FAF7] px-4 py-3 text-xs text-[#254B33] sm:grid-cols-2">
-                <span>
-                  <strong className="text-[#06271A]">Locality:</strong>{' '}
-                  {activeIssue.locality}
-                </span>
-                <span>
-                  <strong className="text-[#06271A]">City &amp; District:</strong>{' '}
-                  {activeIssue.city}, {activeIssue.district}
-                </span>
-                <span>
-                  <strong className="text-[#06271A]">State &amp; PIN:</strong>{' '}
-                  {activeIssue.state} —{' '}
-                  <span className="font-mono-tabular">{activeIssue.pin_code}</span>{' '}
-                  (India)
-                </span>
-                <span className="tabular-nums">
-                  <strong className="text-[#06271A]">Submitted:</strong>{' '}
-                  {formatShortDate(activeIssue.submittedAt)}
-                </span>
-              </div>
+          <div className="space-y-4">
+            <p className="text-sm leading-relaxed text-[#254B33]">
+              {activeIssue.description}
+            </p>
 
-              {/* Privacy Notice */}
-              <div className="flex items-center gap-2 text-xs text-[#5E9185]">
-                <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span>
-                  Privacy protection active: reporter identity and personal contact
-                  fields are omitted from public tracking records.
-                </span>
-              </div>
+            <div className="grid gap-2 rounded-xl border border-[#B5D8C7]/70 bg-[#F5FAF7] px-4 py-3 text-xs text-[#254B33] sm:grid-cols-2">
+              <span>
+                <strong className="text-[#06271A]">Locality:</strong>{' '}
+                {activeIssue.locality}
+              </span>
+              <span>
+                <strong className="text-[#06271A]">City &amp; District:</strong>{' '}
+                {activeIssue.city}, {activeIssue.district}
+              </span>
+              <span>
+                <strong className="text-[#06271A]">State &amp; PIN:</strong>{' '}
+                {activeIssue.state} —{' '}
+                <span className="font-mono-tabular">{activeIssue.pin_code}</span>{' '}
+                (India)
+              </span>
+              <span className="tabular-nums">
+                <strong className="text-[#06271A]">Submitted:</strong>{' '}
+                {formatShortDate(activeIssue.submittedAt)}
+              </span>
             </div>
 
-            {/* Uploaded Image or Before/After Resolution Evidence */}
-            {activeIssue.resolutionEvidence?.beforeImageUrl &&
-            activeIssue.resolutionEvidence?.afterImageUrl ? (
-              <div className="space-y-2">
-                <h3 className="font-display text-sm font-bold text-[#06271A]">
-                  Verified Before &amp; After Resolution Evidence
-                </h3>
-                <BeforeAfterSlider
-                  beforeUrl={activeIssue.resolutionEvidence.beforeImageUrl}
-                  afterUrl={activeIssue.resolutionEvidence.afterImageUrl}
-                  title={activeIssue.title}
-                />
-                <p className="text-xs text-[#254B33]">
-                  {activeIssue.resolutionEvidence.summary}
-                </p>
-              </div>
-            ) : (
-              (activeIssue.resolutionEvidence?.afterImageUrl ||
-                activeIssue.imageUrl) && (
-                <div className="space-y-2">
-                  <h3 className="font-display text-sm font-bold text-[#06271A]">
-                    {activeIssue.resolutionEvidence?.afterImageUrl
-                      ? 'Resolution Evidence Photo'
-                      : 'Submitted Site Photo'}
-                  </h3>
-                  <div className="aspect-[16/9] max-h-72 overflow-hidden rounded-xl border border-[#B5D8C7] bg-[#F5FAF7]">
-                    <ResilientImage
-                      src={
-                        activeIssue.resolutionEvidence?.afterImageUrl ||
-                        activeIssue.imageUrl
-                      }
-                      alt={activeIssue.title}
-                      className="h-full w-full object-cover"
-                    />
-                  </div>
-                  {activeIssue.resolutionEvidence?.summary && (
-                    <p className="text-xs text-[#254B33]">
-                      {activeIssue.resolutionEvidence.summary}
-                    </p>
-                  )}
-                </div>
-              )
-            )}
+            {/* Privacy Notice */}
+            <div className="flex items-center gap-2 text-xs text-[#5E9185]">
+              <ShieldCheck className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>
+                Privacy protection active: reporter identity and personal contact
+                fields are omitted from public tracking records.
+              </span>
+            </div>
+          </div>
 
-            {/* Status Timeline */}
-            <div className="space-y-3">
+          {/* Linked Community Initiatives */}
+          {linkedInitiatives.length > 0 && (
+            <div className="rounded-xl border border-[#B5D8C7] bg-[#F5FAF7] p-4 space-y-2">
               <h3 className="font-display text-sm font-bold text-[#06271A]">
-                Verification &amp; Status Timeline
+                Linked Community Initiatives
               </h3>
-              <ol className="space-y-3 border-l border-[#B5D8C7] pl-5">
-                {activeIssue.timeline.map((entry) => (
-                  <li key={entry.id} className="relative space-y-1">
-                    <span
-                      aria-hidden="true"
-                      className="absolute -left-[25px] top-1.5 h-2.5 w-2.5 rounded-full border border-[#254B33] bg-[#B5D8C7]"
-                    />
-                    <div className="flex flex-wrap items-center gap-2 text-xs">
+              <ul className="space-y-2">
+                {linkedInitiatives.map((init) => (
+                  <li
+                    key={init.id}
+                    className="flex flex-wrap items-center justify-between gap-2 text-xs"
+                  >
+                    <div className="flex items-center gap-2 text-[#254B33]">
+                      <Users className="h-3.5 w-3.5 text-[#5E9185]" aria-hidden="true" />
                       <span className="font-semibold text-[#06271A]">
-                        {entry.status}
+                        {init.title}
                       </span>
-                      <span aria-hidden="true" className="text-[#9CCCCC]">
-                        ·
-                      </span>
-                      <span className="text-[#5E9185]">{entry.actorRole}</span>
-                      <span aria-hidden="true" className="text-[#9CCCCC]">
-                        ·
-                      </span>
-                      <span className="font-mono-tabular text-[#254B33]/80">
-                        {formatShortDate(entry.timestamp)}
-                      </span>
+                      <span>({init.status})</span>
                     </div>
-                    <p className="text-sm text-[#254B33]">{entry.note}</p>
+                    <button
+                      type="button"
+                      onClick={() => onSelectInitiative(init.id)}
+                      className="font-semibold text-[#254B33] underline decoration-[#5E9185] underline-offset-4 hover:text-[#06271A]"
+                    >
+                      View Initiative
+                    </button>
                   </li>
                 ))}
-              </ol>
+              </ul>
             </div>
+          )}
 
-            {/* Follow-up Checks */}
-            {activeIssue.followUpChecks.length > 0 && (
-              <div className="space-y-2 rounded-xl border border-[#B5D8C7] bg-[#F5FAF7] p-4">
+          {/* Uploaded Image or Before/After Resolution Evidence */}
+          {activeIssue.resolutionEvidence?.beforeImageUrl &&
+          activeIssue.resolutionEvidence?.afterImageUrl ? (
+            <div className="space-y-2">
+              <h3 className="font-display text-sm font-bold text-[#06271A]">
+                Verified Before &amp; After Resolution Evidence
+              </h3>
+              <BeforeAfterSlider
+                beforeUrl={activeIssue.resolutionEvidence.beforeImageUrl}
+                afterUrl={activeIssue.resolutionEvidence.afterImageUrl}
+                title={activeIssue.title}
+              />
+              <p className="text-xs text-[#254B33]">
+                {activeIssue.resolutionEvidence.summary}
+              </p>
+            </div>
+          ) : (
+            (activeIssue.resolutionEvidence?.afterImageUrl ||
+              activeIssue.imageUrl) && (
+              <div className="space-y-2">
                 <h3 className="font-display text-sm font-bold text-[#06271A]">
-                  Sustained Follow-Up Checks
+                  {activeIssue.resolutionEvidence?.afterImageUrl
+                    ? 'Resolution Evidence Photo'
+                    : 'Submitted Site Photo'}
                 </h3>
-                <ul className="space-y-2 text-xs text-[#254B33]">
-                  {activeIssue.followUpChecks.map((check) => (
-                    <li key={check.id}>
-                      <span className="font-semibold text-[#06271A]">
-                        {check.outcome}
-                      </span>{' '}
-                      <span className="font-mono-tabular text-[#5E9185]">
-                        ({formatShortDate(check.checkedAt)})
-                      </span>
-                      : {check.note}
-                    </li>
-                  ))}
-                </ul>
+                <div className="aspect-[16/9] max-h-72 overflow-hidden rounded-xl border border-[#B5D8C7] bg-[#F5FAF7]">
+                  <ResilientImage
+                    src={
+                      activeIssue.resolutionEvidence?.afterImageUrl ||
+                      activeIssue.imageUrl
+                    }
+                    alt={activeIssue.title}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                {activeIssue.resolutionEvidence?.summary && (
+                  <p className="text-xs text-[#254B33]">
+                    {activeIssue.resolutionEvidence.summary}
+                  </p>
+                )}
               </div>
-            )}
+            )
+          )}
+
+          {/* Status Timeline */}
+          <div className="space-y-3">
+            <h3 className="font-display text-sm font-bold text-[#06271A]">
+              Verification &amp; Status Timeline
+            </h3>
+            <ol className="space-y-3 border-l border-[#B5D8C7] pl-5">
+              {activeIssue.timeline.map((entry) => (
+                <li key={entry.id} className="relative space-y-1">
+                  <span
+                    aria-hidden="true"
+                    className="absolute -left-[25px] top-1.5 h-2.5 w-2.5 rounded-full border border-[#254B33] bg-[#B5D8C7]"
+                  />
+                  <div className="flex flex-wrap items-center gap-2 text-xs">
+                    <span className="font-semibold text-[#06271A]">
+                      {entry.status}
+                    </span>
+                    <span aria-hidden="true" className="text-[#9CCCCC]">
+                      ·
+                    </span>
+                    <span className="text-[#5E9185]">{entry.actorRole}</span>
+                    <span aria-hidden="true" className="text-[#9CCCCC]">
+                      ·
+                    </span>
+                    <span className="font-mono-tabular text-[#254B33]/80">
+                      {formatShortDate(entry.timestamp)}
+                    </span>
+                  </div>
+                  <p className="text-sm text-[#254B33]">{entry.note}</p>
+                </li>
+              ))}
+            </ol>
           </div>
-        </div>
+
+          {/* Follow-up Checks */}
+          {activeIssue.followUpChecks.length > 0 && (
+            <div className="space-y-2 rounded-xl border border-[#B5D8C7] bg-[#F5FAF7] p-4">
+              <h3 className="font-display text-sm font-bold text-[#06271A]">
+                Sustained Follow-Up Checks
+              </h3>
+              <ul className="space-y-2 text-xs text-[#254B33]">
+                {activeIssue.followUpChecks.map((check) => (
+                  <li key={check.id}>
+                    <span className="font-semibold text-[#06271A]">
+                      {check.outcome}
+                    </span>{' '}
+                    <span className="font-mono-tabular text-[#5E9185]">
+                      ({formatShortDate(check.checkedAt)})
+                    </span>
+                    : {check.note}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </ModalDialog>
       )}
     </section>
   );

@@ -1,5 +1,4 @@
 import {
-  BeforeAfterCase,
   CivicIssue,
   CommunityInitiative,
   IssueCategory,
@@ -8,6 +7,7 @@ import {
   UserRole,
   VolunteerRegistration,
 } from '../types/civic';
+import { syncInitiativeRegistrationCounts } from '../utils/civicLogic';
 
 export const SEED_HERO_IMAGE = '/src/assets/images/india_hero_neighbourhood_1794910739231.jpg';
 export const SEED_BEFORE_WASTE_IMAGE = '/src/assets/images/india_issue_waste_bin_1794910740123.jpg';
@@ -43,6 +43,13 @@ export const DEMO_ACCOUNTS: Array<UserAccount & { passwordHint: string }> = [
     passwordHint: 'coord1234',
   },
 ];
+
+export const SEED_USERS: UserAccount[] = DEMO_ACCOUNTS.map(
+  ({ passwordHint, ...account }) => ({
+    ...account,
+    demoPassword: passwordHint,
+  }),
+);
 
 export const SEED_ISSUES: CivicIssue[] = [
   {
@@ -111,7 +118,7 @@ export const SEED_ISSUES: CivicIssue[] = [
     ],
     resolutionEvidence: {
       summary:
-        'Joint cleanup by 14 Bengaluru volunteers and ward sanitation crew replaced the damaged drum with segregated sorting bins and restored the planter.',
+        'Joint cleanup by Bengaluru volunteers and ward sanitation crew replaced the damaged drum with segregated sorting bins and restored the planter.',
       beforeImageUrl: SEED_BEFORE_WASTE_IMAGE,
       afterImageUrl: SEED_AFTER_RESTORED_IMAGE,
       approvedByCoordinator: true,
@@ -227,7 +234,7 @@ export const SEED_ISSUES: CivicIssue[] = [
         id: 'CIV-2026-1003-tl-3',
         status: IssueStatus.ActionInProgress,
         timestamp: '2026-11-14T12:00:00Z',
-        note: 'Assigned to Mysuru Community Park Restoration initiative scheduled for Nov 22.',
+        note: 'Assigned to Mysuru Community Park Restoration initiative.',
         actorRole: 'Civic Coordinator',
       },
     ],
@@ -451,7 +458,148 @@ export const SEED_ISSUES: CivicIssue[] = [
   },
 ];
 
-export const SEED_INITIATIVES: CommunityInitiative[] = [
+export const SEED_REGISTRATIONS: VolunteerRegistration[] = [
+  // Indiranagar Neighbourhood Cleanup Drive (4 volunteers)
+  {
+    id: 'reg-seed-1',
+    initiativeId: 'init-cleanup-drive',
+    volunteerName: 'Karthik Nair',
+    volunteerEmail: 'volunteer@civilense.in',
+    registeredAt: '2026-11-12T10:15:00Z',
+  },
+  {
+    id: 'reg-seed-2',
+    initiativeId: 'init-cleanup-drive',
+    volunteerName: 'Ananya Rao',
+    volunteerEmail: 'citizen@civilense.in',
+    registeredAt: '2026-11-12T14:30:00Z',
+  },
+  {
+    id: 'reg-seed-3',
+    initiativeId: 'init-cleanup-drive',
+    volunteerName: 'Siddharth Hegde',
+    volunteerEmail: 'siddharth.h@civilense.in',
+    registeredAt: '2026-11-13T08:45:00Z',
+  },
+  {
+    id: 'reg-seed-4',
+    initiativeId: 'init-cleanup-drive',
+    volunteerName: 'Divya Subramanian',
+    volunteerEmail: 'divya.s@civilense.in',
+    registeredAt: '2026-11-14T11:10:00Z',
+  },
+  // Gokulam Community Park Restoration (5 volunteers)
+  {
+    id: 'reg-seed-5',
+    initiativeId: 'init-park-restoration',
+    volunteerName: 'Meera Krishnan',
+    volunteerEmail: 'meera.k@civilense.in',
+    registeredAt: '2026-11-13T14:20:00Z',
+  },
+  {
+    id: 'reg-seed-6',
+    initiativeId: 'init-park-restoration',
+    volunteerName: 'Nikhil Gowda',
+    volunteerEmail: 'nikhil.g@civilense.in',
+    registeredAt: '2026-11-14T09:00:00Z',
+  },
+  {
+    id: 'reg-seed-7',
+    initiativeId: 'init-park-restoration',
+    volunteerName: 'Kavya Urs',
+    volunteerEmail: 'kavya.u@civilense.in',
+    registeredAt: '2026-11-15T16:25:00Z',
+  },
+  {
+    id: 'reg-seed-8',
+    initiativeId: 'init-park-restoration',
+    volunteerName: 'Pranav Joshi',
+    volunteerEmail: 'pranav.j@civilense.in',
+    registeredAt: '2026-11-16T07:40:00Z',
+  },
+  {
+    id: 'reg-seed-9',
+    initiativeId: 'init-park-restoration',
+    volunteerName: 'Shruti Bhat',
+    volunteerEmail: 'shruti.b@civilense.in',
+    registeredAt: '2026-11-17T11:50:00Z',
+  },
+  // Shivajinagar Waste Segregation Awareness Drive (3 volunteers)
+  {
+    id: 'reg-seed-10',
+    initiativeId: 'init-awareness-campaign',
+    volunteerName: 'Rohan Kulkarni',
+    volunteerEmail: 'rohan.k@civilense.in',
+    registeredAt: '2026-11-14T09:05:00Z',
+  },
+  {
+    id: 'reg-seed-11',
+    initiativeId: 'init-awareness-campaign',
+    volunteerName: 'Sneha Patwardhan',
+    volunteerEmail: 'sneha.p@civilense.in',
+    registeredAt: '2026-11-15T10:15:00Z',
+  },
+  {
+    id: 'reg-seed-12',
+    initiativeId: 'init-awareness-campaign',
+    volunteerName: 'Omkar Gokhale',
+    volunteerEmail: 'omkar.g@civilense.in',
+    registeredAt: '2026-11-16T15:30:00Z',
+  },
+  // Fort Kochi Leaf Composting & Bin Care Initiative (3 volunteers)
+  {
+    id: 'reg-seed-13',
+    initiativeId: 'init-waste-management',
+    volunteerName: 'Lakshmi Menon',
+    volunteerEmail: 'lakshmi.m@civilense.in',
+    registeredAt: '2026-11-15T08:20:00Z',
+  },
+  {
+    id: 'reg-seed-14',
+    initiativeId: 'init-waste-management',
+    volunteerName: 'Arjun Varghese',
+    volunteerEmail: 'arjun.v@civilense.in',
+    registeredAt: '2026-11-16T12:10:00Z',
+  },
+  {
+    id: 'reg-seed-15',
+    initiativeId: 'init-waste-management',
+    volunteerName: 'Fathima Beevi',
+    volunteerEmail: 'fathima.b@civilense.in',
+    registeredAt: '2026-11-17T09:45:00Z',
+  },
+  // Lodhi Colony Footpath & Planter Upkeep (4 volunteers)
+  {
+    id: 'reg-seed-16',
+    initiativeId: 'init-lodhi-walk-done',
+    volunteerName: 'Aarav Malhotra',
+    volunteerEmail: 'aarav.m@civilense.in',
+    registeredAt: '2026-11-01T09:00:00Z',
+  },
+  {
+    id: 'reg-seed-17',
+    initiativeId: 'init-lodhi-walk-done',
+    volunteerName: 'Nandini Verma',
+    volunteerEmail: 'nandini.v@civilense.in',
+    registeredAt: '2026-11-01T11:30:00Z',
+  },
+  {
+    id: 'reg-seed-18',
+    initiativeId: 'init-lodhi-walk-done',
+    volunteerName: 'Vikramaditya Sen',
+    volunteerEmail: 'vikram.s@civilense.in',
+    registeredAt: '2026-11-02T14:00:00Z',
+  },
+  {
+    id: 'reg-seed-19',
+    initiativeId: 'init-lodhi-walk-done',
+    volunteerName: 'Pooja Kapoor',
+    volunteerEmail: 'pooja.k@civilense.in',
+    registeredAt: '2026-11-03T08:15:00Z',
+  },
+];
+
+const RAW_SEED_INITIATIVES: CommunityInitiative[] = [
   {
     id: 'init-cleanup-drive',
     title: 'Indiranagar Neighbourhood Cleanup Drive',
@@ -467,11 +615,15 @@ export const SEED_INITIATIVES: CommunityInitiative[] = [
     latitude: 12.9719,
     longitude: 77.6412,
     location: 'Indiranagar 12th Main, Bengaluru, Karnataka - 560038, India',
-    dateLabel: 'Sat, Nov 21, 2026',
+    eventDate: '2026-12-05',
+    startTime: '07:30',
+    endTime: '10:30',
+    dateLabel: 'Sat, 05 Dec 2026',
     timeLabel: '07:30 AM – 10:30 AM',
-    capacity: 25,
-    registeredCount: 16,
+    capacity: 15,
+    registeredCount: 4,
     status: 'Open',
+    linkedIssueIds: ['CIV-2026-1001'],
     imageUrl: SEED_COMMUNITY_CLEANUP_IMAGE,
     organizer: 'Indiranagar Civic Circle (Demo)',
     highlights: [
@@ -495,11 +647,15 @@ export const SEED_INITIATIVES: CommunityInitiative[] = [
     latitude: 12.3264,
     longitude: 76.6256,
     location: 'Gokulam 3rd Stage, Mysuru, Karnataka - 570002, India',
-    dateLabel: 'Sun, Nov 22, 2026',
+    eventDate: '2026-12-06',
+    startTime: '07:00',
+    endTime: '10:15',
+    dateLabel: 'Sun, 06 Dec 2026',
     timeLabel: '07:00 AM – 10:15 AM',
-    capacity: 30,
-    registeredCount: 22,
+    capacity: 20,
+    registeredCount: 5,
     status: 'Open',
+    linkedIssueIds: ['CIV-2026-1003'],
     imageUrl: SEED_PARK_RESTORATION_IMAGE,
     organizer: 'Mysuru Green Stewardship (Demo)',
     highlights: [
@@ -523,11 +679,15 @@ export const SEED_INITIATIVES: CommunityInitiative[] = [
     latitude: 18.5289,
     longitude: 73.8419,
     location: 'Shivajinagar FC Road, Pune, Maharashtra - 411004, India',
-    dateLabel: 'Wed, Nov 25, 2026',
+    eventDate: '2026-12-12',
+    startTime: '16:30',
+    endTime: '18:30',
+    dateLabel: 'Sat, 12 Dec 2026',
     timeLabel: '04:30 PM – 06:30 PM',
     capacity: 18,
-    registeredCount: 11,
+    registeredCount: 3,
     status: 'Open',
+    linkedIssueIds: ['CIV-2026-1005'],
     imageUrl: SEED_HERO_IMAGE,
     organizer: 'Pune Clean Ward Collective (Demo)',
     highlights: [
@@ -551,11 +711,15 @@ export const SEED_INITIATIVES: CommunityInitiative[] = [
     latitude: 9.9658,
     longitude: 76.2421,
     location: 'Fort Kochi Parade Ground, Kochi, Kerala - 682001, India',
-    dateLabel: 'Sat, Nov 28, 2026',
+    eventDate: '2026-12-19',
+    startTime: '08:00',
+    endTime: '11:30',
+    dateLabel: 'Sat, 19 Dec 2026',
     timeLabel: '08:00 AM – 11:30 AM',
-    capacity: 20,
-    registeredCount: 14,
+    capacity: 15,
+    registeredCount: 3,
     status: 'Open',
+    linkedIssueIds: ['CIV-2026-1007'],
     imageUrl: SEED_AFTER_RESTORED_IMAGE,
     organizer: 'Kochi Coastal Zero-Waste Group (Demo)',
     highlights: [
@@ -579,96 +743,23 @@ export const SEED_INITIATIVES: CommunityInitiative[] = [
     latitude: 28.5877,
     longitude: 77.2248,
     location: 'Lodhi Colony Block 4, New Delhi, Delhi - 110003, India',
-    dateLabel: 'Sun, Nov 04, 2026',
+    eventDate: '2026-11-04',
+    startTime: '08:00',
+    endTime: '11:30',
+    dateLabel: 'Wed, 04 Nov 2026',
     timeLabel: '08:00 AM – 11:30 AM',
     capacity: 15,
-    registeredCount: 14,
+    registeredCount: 4,
     status: 'Completed',
+    linkedIssueIds: ['CIV-2026-1006'],
     imageUrl: SEED_PATHWAY_REPAIR_IMAGE,
     organizer: 'New Delhi Neighbourhood Forum (Demo)',
     highlights: [
-      '14 local residents participated and verified sustained upkeep',
-      'Linked to verified resolution in Indiranagar & Lodhi pilot',
+      'Local residents participated and verified sustained upkeep',
+      'Linked to Lodhi Colony walkway & hedge maintenance',
     ],
   },
 ];
 
-export const SEED_REGISTRATIONS: VolunteerRegistration[] = [
-  {
-    id: 'reg-seed-1',
-    initiativeId: 'init-cleanup-drive',
-    volunteerName: 'Karthik Nair',
-    volunteerEmail: 'volunteer@civilense.in',
-    registeredAt: '2026-11-12T10:15:00Z',
-  },
-  {
-    id: 'reg-seed-2',
-    initiativeId: 'init-park-restoration',
-    volunteerName: 'Meera Krishnan',
-    volunteerEmail: 'meera.k@civilense.in',
-    registeredAt: '2026-11-13T14:20:00Z',
-  },
-  {
-    id: 'reg-seed-3',
-    initiativeId: 'init-awareness-campaign',
-    volunteerName: 'Rohan Kulkarni',
-    volunteerEmail: 'rohan.k@civilense.in',
-    registeredAt: '2026-11-14T09:05:00Z',
-  },
-];
-
-export const SEED_BEFORE_AFTER_CASES: BeforeAfterCase[] = [
-  {
-    id: 'ba-indiranagar-corner',
-    title: 'Indiranagar 12th Main Corner Restoration',
-    state: 'Karnataka',
-    city: 'Bengaluru',
-    locality: 'Indiranagar 12th Main',
-    pin_code: '560038',
-    issueId: 'CIV-2026-1001',
-    completedDate: 'Nov 04, 2026',
-    beforeImageUrl: SEED_BEFORE_WASTE_IMAGE,
-    afterImageUrl: SEED_AFTER_RESTORED_IMAGE,
-    summary:
-      'Replaced overflowing single drum with segregated three-stream sorting bins, reset curb pavers, and replanted the concrete planter.',
-    volunteersInvolved: 14,
-  },
-  {
-    id: 'ba-mylapore-walk',
-    title: 'Mylapore Tank Square Walkway & Bollard Lighting',
-    state: 'Tamil Nadu',
-    city: 'Chennai',
-    locality: 'Mylapore Tank Square',
-    pin_code: '600004',
-    issueId: 'CIV-2026-1002',
-    completedDate: 'Nov 09, 2026',
-    beforeImageUrl: SEED_BEFORE_FOOTPATH_IMAGE,
-    afterImageUrl: SEED_PATHWAY_REPAIR_IMAGE,
-    summary:
-      'Re-leveled 18 meters of settled brick walkway, added tactile curb transitions, and installed low-glare solar bollard lighting.',
-    volunteersInvolved: 8,
-  },
-];
-
-export const HOME_DEMO_STATS = [
-  {
-    value: '120+',
-    label: 'Reports Submitted',
-    detail: 'Sample observations logged across Indian cities',
-  },
-  {
-    value: '85+',
-    label: 'Issues Verified',
-    detail: 'Reviewed on-site for objective accuracy',
-  },
-  {
-    value: '35+',
-    label: 'Community Volunteers',
-    detail: 'Active residents joining weekend drives',
-  },
-  {
-    value: '12+',
-    label: 'Improvement Activities',
-    detail: 'Cleanup, planting, and awareness sessions',
-  },
-];
+export const SEED_INITIATIVES: CommunityInitiative[] =
+  syncInitiativeRegistrationCounts(RAW_SEED_INITIATIVES, SEED_REGISTRATIONS);

@@ -14,25 +14,27 @@ import {
   UserAccount,
 } from '../types/civic';
 import {
-  createCivicIssueRecord,
+  IssueSubmissionInput,
   requiresAuthoritySafetyAdvisory,
+  validateImageFile,
   validateIssueSubmission,
 } from '../utils/civicLogic';
-import {
-  INDIA_COUNTRY_CODE,
-  INDIAN_STATES_AND_UTS,
-} from '../utils/indiaGeo';
+import { INDIA_COUNTRY_CODE } from '../utils/indiaGeo';
 import { SEED_BEFORE_WASTE_IMAGE } from '../data/seedData';
 import {
   LocationPickerMap,
   SelectedIndiaMapLocation,
 } from '../components/LocationPickerMap';
+import { IndiaAddressFields } from '../components/IndiaAddressFields';
 import { ResilientImage } from '../components/ResilientImage';
 
 interface ReportIssuePageProps {
-  existingIssues: CivicIssue[];
   currentUser: UserAccount | null;
-  onSubmitIssue: (issue: CivicIssue) => void;
+  isSupabaseMode?: boolean;
+  onSubmitIssue: (
+    input: IssueSubmissionInput,
+    options?: { imageFile?: File | null },
+  ) => Promise<{ ok: boolean; issue?: CivicIssue; error?: string }>;
   onTrackReport: (reportId: string) => void;
   onNavigate: (route: PageRoute) => void;
 }
@@ -40,8 +42,8 @@ interface ReportIssuePageProps {
 const CATEGORIES = Object.values(IssueCategory);
 
 export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
-  existingIssues,
   currentUser,
+  isSupabaseMode = false,
   onSubmitIssue,
   onTrackReport,
   onNavigate,
@@ -59,10 +61,13 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
   const [selectedMapLoc, setSelectedMapLoc] = useState<
     SelectedIndiaMapLocation | undefined
   >(undefined);
+  const [mapConfirmed, setMapConfirmed] = useState(false);
 
   const [imageUrl, setImageUrl] = useState<string | undefined>(undefined);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imageFileName, setImageFileName] = useState<string>('');
   const [isAnonymous, setIsAnonymous] = useState<boolean>(true);
+  const [submitting, setSubmitting] = useState<boolean>(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submittedIssue, setSubmittedIssue] = useState<CivicIssue | null>(null);
 
@@ -74,25 +79,88 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
 
-    setImageFileName(file.name);
+    const validation = validateImageFile({
+      name: file.name,
+      type: file.type,
+      size: file.size,
+    });
+    if (!validation.valid) {
+      setErrors((prev) => ({
+        ...prev,
+        image: validation.error ?? 'Invalid image upload.',
+      }));
+      return;
+    }
+
+    setImageFile(file);
+
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setImageUrl(reader.result);
+        setImageFileName(file.name);
+        setErrors((prev) => ({ ...prev, image: '' }));
       }
+    };
+    reader.onerror = () => {
+      setImageFile(null);
+      setErrors((prev) => ({
+        ...prev,
+        image: 'Unable to read the selected image file. Please try another photo.',
+      }));
     };
     reader.readAsDataURL(file);
   };
 
-  const handleMapSelect = (loc: SelectedIndiaMapLocation) => {
+  const handleAddressFieldChange = (
+    field: 'state' | 'district' | 'city' | 'locality' | 'pin_code',
+    value: string,
+  ) => {
+    if (field === 'state') setStateName(value);
+    if (field === 'district') setDistrict(value);
+    if (field === 'city') setCity(value);
+    if (field === 'locality') setLocality(value);
+    if (field === 'pin_code') setPinCode(value);
+
+    // Require re-confirmation when address fields change after map pin placement
+    if (selectedMapLoc) {
+      setMapConfirmed(false);
+    }
+
+    setErrors((prev) => ({
+      ...prev,
+      [field]: '',
+      coordinates: '',
+      mapConfirmed: '',
+    }));
+  };
+
+  const handleMapSelect = (
+    loc: SelectedIndiaMapLocation,
+    options?: { preserveExistingOnEmpty?: boolean },
+  ) => {
     setSelectedMapLoc(loc);
-    if (loc.state) setStateName(loc.state);
-    if (loc.district) setDistrict(loc.district);
-    if (loc.city) setCity(loc.city);
-    if (loc.locality) setLocality(loc.locality);
-    if (loc.pin_code) setPinCode(loc.pin_code);
+    const preserve = options?.preserveExistingOnEmpty;
+
+    if (loc.state || !preserve) {
+      setStateName((prev) => loc.state || (preserve ? prev : ''));
+    }
+    if (loc.district || !preserve) {
+      setDistrict((prev) => loc.district || (preserve ? prev : ''));
+    }
+    if (loc.city || !preserve) {
+      setCity((prev) => loc.city || (preserve ? prev : ''));
+    }
+    if (loc.locality || !preserve) {
+      setLocality((prev) => loc.locality || (preserve ? prev : ''));
+    }
+    if (loc.pin_code || !preserve) {
+      setPinCode((prev) => loc.pin_code || (preserve ? prev : ''));
+    }
+
     setErrors((prev) => ({
       ...prev,
       state: '',
@@ -101,10 +169,11 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
       locality: '',
       pin_code: '',
       coordinates: '',
+      mapConfirmed: '',
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const coordinates: MapCoordinate | undefined = selectedMapLoc
       ? {
@@ -114,7 +183,7 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
         }
       : undefined;
 
-    const payload = {
+    const payload: IssueSubmissionInput = {
       category,
       title,
       description,
@@ -127,7 +196,9 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
       latitude: selectedMapLoc?.lat,
       longitude: selectedMapLoc?.lng,
       coordinates,
-      imageUrl,
+      mapConfirmed,
+      requireMapSelection: true,
+      imageUrl: isSupabaseMode ? undefined : imageUrl,
       isAnonymous,
       reporterEmail: currentUser?.email,
     };
@@ -138,21 +209,22 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
       return;
     }
 
+    setSubmitting(true);
+    setErrors({});
     try {
-      const newRecord = createCivicIssueRecord(
-        payload,
-        existingIssues.map((i) => i.id),
-      );
-      onSubmitIssue(newRecord);
-      setSubmittedIssue(newRecord);
+      const result = await onSubmitIssue(payload, { imageFile });
+      if (!result.ok || !result.issue) {
+        setErrors({
+          form:
+            result.error ??
+            'Unable to submit civic report. Verify India location details and network connection.',
+        });
+        return;
+      }
+      setSubmittedIssue(result.issue);
       setErrors({});
-    } catch (err) {
-      setErrors({
-        form:
-          err instanceof Error
-            ? err.message
-            : 'Unable to validate India location details.',
-      });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -166,7 +238,9 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
     setLocality('');
     setPinCode('');
     setSelectedMapLoc(undefined);
+    setMapConfirmed(false);
     setImageUrl(undefined);
+    setImageFile(null);
     setImageFileName('');
     setIsAnonymous(true);
     setErrors({});
@@ -189,8 +263,10 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
                 Thank you for helping care for your neighbourhood
               </h1>
               <p className="text-sm text-[#254B33]">
-                Your report has been saved locally in this Version 0 prototype and
-                marked as <span className="font-semibold">Submitted</span> (awaiting
+                {isSupabaseMode
+                  ? 'Your report has been saved to the Civilense Supabase database and marked as '
+                  : 'Your report has been saved locally in this prototype and marked as '}
+                <span className="font-semibold">Submitted</span> (awaiting
                 coordinator verification).
               </p>
             </div>
@@ -199,7 +275,7 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
           <div className="rounded-xl border border-[#B5D8C7] bg-[#F5FAF7] p-5 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-xs font-medium text-[#254B33]">
-                Unique Demo Report ID
+                {isSupabaseMode ? 'Tracking Report Code' : 'Unique Demo Report ID'}
               </span>
               <span className="font-mono-tabular rounded-md border border-[#5E9185] bg-white px-3 py-1 text-base font-bold text-[#06271A]">
                 {submittedIssue.id}
@@ -409,7 +485,8 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
                 Location Details (India Only)
               </h2>
               <p className="text-xs text-[#254B33]/85">
-                Use the India map search below or enter your Indian locality manually.
+                Use the India map search below or enter your Indian locality manually,
+                then confirm the map pin.
               </p>
             </div>
             <div className="rounded-md border border-[#5E9185] bg-white px-3 py-1 text-xs font-semibold text-[#06271A]">
@@ -417,149 +494,16 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
             </div>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {/* State / UT Dropdown */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="issue-state"
-                className="block text-xs font-semibold text-[#06271A]"
-              >
-                State / Union Territory <span className="text-red-700">*</span>
-              </label>
-              <select
-                id="issue-state"
-                value={stateName}
-                onChange={(e) => {
-                  setStateName(e.target.value);
-                  setErrors((prev) => ({ ...prev, state: '' }));
-                }}
-                aria-invalid={Boolean(errors.state)}
-                className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 text-sm text-[#06271A] focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-              >
-                <option value="">Select Indian State / UT</option>
-                {INDIAN_STATES_AND_UTS.map((st) => (
-                  <option key={st} value={st}>
-                    {st}
-                  </option>
-                ))}
-              </select>
-              {errors.state && (
-                <p role="alert" className="text-xs font-medium text-red-700">
-                  {errors.state}
-                </p>
-              )}
-            </div>
-
-            {/* District */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="issue-district"
-                className="block text-xs font-semibold text-[#06271A]"
-              >
-                District <span className="text-red-700">*</span>
-              </label>
-              <input
-                id="issue-district"
-                type="text"
-                value={district}
-                onChange={(e) => {
-                  setDistrict(e.target.value);
-                  setErrors((prev) => ({ ...prev, district: '' }));
-                }}
-                placeholder="e.g., Bengaluru Urban"
-                aria-invalid={Boolean(errors.district)}
-                className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 text-sm text-[#06271A] placeholder:text-[#5E9185]/80 focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-              />
-              {errors.district && (
-                <p role="alert" className="text-xs font-medium text-red-700">
-                  {errors.district}
-                </p>
-              )}
-            </div>
-
-            {/* City / Town */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="issue-city"
-                className="block text-xs font-semibold text-[#06271A]"
-              >
-                City / Town <span className="text-red-700">*</span>
-              </label>
-              <input
-                id="issue-city"
-                type="text"
-                value={city}
-                onChange={(e) => {
-                  setCity(e.target.value);
-                  setErrors((prev) => ({ ...prev, city: '' }));
-                }}
-                placeholder="e.g., Bengaluru"
-                aria-invalid={Boolean(errors.city)}
-                className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 text-sm text-[#06271A] placeholder:text-[#5E9185]/80 focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-              />
-              {errors.city && (
-                <p role="alert" className="text-xs font-medium text-red-700">
-                  {errors.city}
-                </p>
-              )}
-            </div>
-
-            {/* 6-digit Indian PIN Code */}
-            <div className="space-y-1.5">
-              <label
-                htmlFor="issue-pincode"
-                className="block text-xs font-semibold text-[#06271A]"
-              >
-                PIN Code (6-digit Indian PIN) <span className="text-red-700">*</span>
-              </label>
-              <input
-                id="issue-pincode"
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={pinCode}
-                onChange={(e) => {
-                  setPinCode(e.target.value.replace(/\D/g, '').slice(0, 6));
-                  setErrors((prev) => ({ ...prev, pin_code: '' }));
-                }}
-                placeholder="e.g., 560038"
-                aria-invalid={Boolean(errors.pin_code)}
-                className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 font-mono-tabular text-sm text-[#06271A] placeholder:text-[#5E9185]/80 focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-              />
-              {errors.pin_code && (
-                <p role="alert" className="text-xs font-medium text-red-700">
-                  {errors.pin_code}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {/* Locality / Area */}
-          <div className="space-y-1.5">
-            <label
-              htmlFor="issue-locality"
-              className="block text-xs font-semibold text-[#06271A]"
-            >
-              Locality / Area / Landmark <span className="text-red-700">*</span>
-            </label>
-            <input
-              id="issue-locality"
-              type="text"
-              value={locality}
-              onChange={(e) => {
-                setLocality(e.target.value);
-                setErrors((prev) => ({ ...prev, locality: '' }));
-              }}
-              placeholder="e.g., Indiranagar 12th Main, opposite BDA Park"
-              aria-invalid={Boolean(errors.locality)}
-              className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2.5 text-sm text-[#06271A] placeholder:text-[#5E9185]/80 focus:border-[#254B33] focus:outline-none focus:ring-2 focus:ring-[#B5D8C7]"
-            />
-            {errors.locality && (
-              <p role="alert" className="text-xs font-medium text-red-700">
-                {errors.locality}
-              </p>
-            )}
-          </div>
+          <IndiaAddressFields
+            idPrefix="issue"
+            stateName={stateName}
+            district={district}
+            city={city}
+            locality={locality}
+            pinCode={pinCode}
+            errors={errors}
+            onChange={handleAddressFieldChange}
+          />
 
           {errors.coordinates && (
             <p role="alert" className="text-xs font-medium text-red-700">
@@ -569,9 +513,18 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
         </div>
 
         {/* India-Restricted Map Pin Selector */}
-        <LocationPickerMap selected={selectedMapLoc} onSelect={handleMapSelect} />
+        <LocationPickerMap
+          selected={selectedMapLoc}
+          confirmed={mapConfirmed}
+          onSelect={handleMapSelect}
+          onConfirmChange={(nextConfirmed) => {
+            setMapConfirmed(nextConfirmed);
+            setErrors((prev) => ({ ...prev, mapConfirmed: '', coordinates: '' }));
+          }}
+          confirmError={errors.mapConfirmed}
+        />
 
-        {/* Image Upload with Preview */}
+        {/* Image Upload with Validation & Preview */}
         <div className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label
@@ -580,12 +533,14 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
             >
               Photo Evidence (Optional)
             </label>
-            {!imageUrl && (
+            {!imageUrl && !isSupabaseMode && (
               <button
                 type="button"
                 onClick={() => {
                   setImageUrl(SEED_BEFORE_WASTE_IMAGE);
+                  setImageFile(null);
                   setImageFileName('sample-civic-site.jpg');
+                  setErrors((prev) => ({ ...prev, image: '' }));
                 }}
                 className="text-xs font-medium text-[#254B33] underline decoration-[#5E9185] underline-offset-4 hover:text-[#06271A]"
               >
@@ -604,13 +559,13 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
                 Click to upload a neighbourhood photo
               </span>
               <span className="text-xs text-[#254B33]/80">
-                PNG or JPG · Focus on the public space, never faces or private
-                vehicle plates
+                JPEG, PNG, or WebP up to 2 MB · Focus on the public space, never faces
+                or private vehicle plates
               </span>
               <input
                 id="issue-image"
                 type="file"
-                accept="image/*"
+                accept="image/jpeg,image/png,image/webp"
                 onChange={handleImageChange}
                 className="sr-only"
               />
@@ -632,7 +587,9 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
                   type="button"
                   onClick={() => {
                     setImageUrl(undefined);
+                    setImageFile(null);
                     setImageFileName('');
+                    setErrors((prev) => ({ ...prev, image: '' }));
                   }}
                   className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-50"
                 >
@@ -641,6 +598,12 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
                 </button>
               </div>
             </div>
+          )}
+
+          {errors.image && (
+            <p role="alert" className="text-xs font-medium text-red-700">
+              {errors.image}
+            </p>
           )}
         </div>
 
@@ -674,13 +637,16 @@ export const ReportIssuePage: React.FC<ReportIssuePageProps> = ({
         {/* Submit */}
         <div className="flex flex-wrap items-center justify-between gap-4 border-t border-[#B5D8C7]/60 pt-5">
           <p className="text-xs text-[#254B33]/80">
-            India-only validation enforced · Stored locally for Version 0 demo
+            {isSupabaseMode
+              ? 'India-only PostGIS & PIN validation enforced · Stored in Supabase'
+              : 'India-only PIN & map confirmation enforced · Local Demo Mode'}
           </p>
           <button
             type="submit"
-            className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[#254B33] px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#06271A] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#254B33]"
+            disabled={submitting}
+            className="inline-flex min-h-[44px] items-center justify-center rounded-lg bg-[#254B33] px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#06271A] disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#254B33]"
           >
-            Submit Report
+            {submitting ? 'Submitting Report...' : 'Submit Report'}
           </button>
         </div>
       </form>

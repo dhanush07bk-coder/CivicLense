@@ -4,9 +4,13 @@ import { CivilenseLogo } from './CivilenseLogo';
 
 interface FooterProps {
   onNavigate: (route: PageRoute) => void;
+  isSupabaseMode?: boolean;
 }
 
-export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
+export const Footer: React.FC<FooterProps> = ({
+  onNavigate,
+  isSupabaseMode = false,
+}) => {
   return (
     <footer className="border-t border-[#B5D8C7]/70 bg-[#06271A] text-white">
       <div className="mx-auto max-w-6xl px-4 py-12 sm:px-6">
@@ -111,10 +115,15 @@ export const Footer: React.FC<FooterProps> = ({ onNavigate }) => {
         </div>
 
         <div className="mt-10 flex flex-col gap-2 border-t border-[#254B33] pt-6 text-xs text-[#9CCCCC]/80 sm:flex-row sm:items-center sm:justify-between">
-          <p>© 2026 Civilense. Version 0 Interactive Prototype.</p>
           <p>
-            Sample data stored locally in browser storage · Architecture ready for
-            Supabase &amp; OpenStreetMap.
+            {isSupabaseMode
+              ? '© 2026 Civilense. India Civic Improvement Platform.'
+              : '© 2026 Civilense. Version 0 Interactive Prototype.'}
+          </p>
+          <p>
+            {isSupabaseMode
+              ? 'Connected to Supabase PostgreSQL & Storage · OpenStreetMap India Location Services.'
+              : 'Sample data stored locally in browser storage · Architecture ready for Supabase & OpenStreetMap.'}
           </p>
         </div>
       </div>

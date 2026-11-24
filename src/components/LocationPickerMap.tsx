@@ -4,7 +4,6 @@ import 'leaflet/dist/leaflet.css';
 import { Check, MapPin, Search, XCircle } from 'lucide-react';
 import {
   containsOverseasLocationText,
-  findNearestIndianPreset,
   INDIA_MAINLAND_POLYGON,
   INDIAN_PLACE_PRESETS,
   isCoordinateWithinIndia,
@@ -26,7 +25,13 @@ export interface SelectedIndiaMapLocation {
 
 interface LocationPickerMapProps {
   selected?: SelectedIndiaMapLocation;
-  onSelect: (location: SelectedIndiaMapLocation) => void;
+  confirmed: boolean;
+  onSelect: (
+    location: SelectedIndiaMapLocation,
+    options?: { preserveExistingOnEmpty?: boolean },
+  ) => void;
+  onConfirmChange: (confirmed: boolean) => void;
+  confirmError?: string;
 }
 
 const INDIA_CENTER: [number, number] = [21.7679, 78.8718];
@@ -48,11 +53,21 @@ function createCivilensePinIcon(): L.DivIcon {
 
 export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
   selected,
+  confirmed,
   onSelect,
+  onConfirmChange,
+  confirmError,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markerRef = useRef<L.Marker | null>(null);
+  const onSelectRef = useRef(onSelect);
+  const onConfirmChangeRef = useRef(onConfirmChange);
+
+  useEffect(() => {
+    onSelectRef.current = onSelect;
+    onConfirmChangeRef.current = onConfirmChange;
+  }, [onSelect, onConfirmChange]);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searching, setSearching] = useState(false);
@@ -61,7 +76,6 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     type: 'error' | 'info' | 'confirmed';
     message: string;
   } | null>(null);
-  const [confirmed, setConfirmed] = useState(false);
 
   const placeMarkerOnMap = (lat: number, lng: number, zoomTo = 13) => {
     const map = mapRef.current;
@@ -90,13 +104,11 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       zoomControl: true,
     });
 
-    // OpenStreetMap tile layer (falls back cleanly onto India polygon boundary if offline)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 18,
     }).addTo(map);
 
-    // Geographic boundary polygon of India for clear visual framing and offline resilience
     L.polygon(
       INDIA_MAINLAND_POLYGON.map(([lat, lng]) => [lat, lng] as [number, number]),
       {
@@ -108,10 +120,10 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       },
     ).addTo(map);
 
-    map.on('click', (e: L.LeafletMouseEvent) => {
+    map.on('click', async (e: L.LeafletMouseEvent) => {
       const { lat, lng } = e.latlng;
       if (!isCoordinateWithinIndia(lat, lng)) {
-        setConfirmed(false);
+        onConfirmChangeRef.current(false);
         setMapNotice({
           type: 'error',
           message:
@@ -120,28 +132,83 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         return;
       }
 
-      const nearest = findNearestIndianPreset(lat, lng);
-      const nextLoc: SelectedIndiaMapLocation = {
-        lat: Number(lat.toFixed(5)),
-        lng: Number(lng.toFixed(5)),
-        state: nearest?.state ?? '',
-        district: nearest?.district ?? '',
-        city: nearest?.city ?? '',
-        locality: nearest?.locality ?? '',
-        pin_code: nearest?.pin_code ?? '',
-        zoneLabel: nearest
-          ? `Pinned near ${nearest.city}, ${nearest.state}`
-          : `India (${lat.toFixed(4)}, ${lng.toFixed(4)})`,
-      };
+      const roundedLat = Number(lat.toFixed(5));
+      const roundedLng = Number(lng.toFixed(5));
+      placeMarkerOnMap(roundedLat, roundedLng, 12);
+      onConfirmChangeRef.current(false);
+      onSelectRef.current(
+        {
+          lat: roundedLat,
+          lng: roundedLng,
+          state: '',
+          district: '',
+          city: '',
+          locality: '',
+          pin_code: '',
+          zoneLabel: `India (${roundedLat.toFixed(4)}, ${roundedLng.toFixed(4)})`,
+        },
+        { preserveExistingOnEmpty: true },
+      );
 
-      placeMarkerOnMap(lat, lng, 12);
-      onSelect(nextLoc);
-      setConfirmed(false);
       setMapNotice({
         type: 'info',
-        message:
-          'Pin placed inside India. Review or adjust the locality/PIN fields below, then confirm.',
+        message: 'Pin placed inside India. Resolving Indian address details...',
       });
+
+      try {
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 3500);
+        const res = await fetch(
+          `https://nominatim.openstreetmap.org/reverse?format=jsonv2&countrycodes=in&lat=${roundedLat}&lon=${roundedLng}&addressdetails=1`,
+          { signal: controller.signal, headers: { Accept: 'application/json' } },
+        );
+        window.clearTimeout(timeout);
+
+        if (res.ok) {
+          const item = (await res.json()) as NominatimSearchItem;
+          const parsed = validateAndParseNominatimIndiaResult(item);
+          if (parsed) {
+            onSelectRef.current(
+              {
+                lat: roundedLat,
+                lng: roundedLng,
+                state: parsed.state,
+                district: parsed.district,
+                city: parsed.city,
+                locality: parsed.locality,
+                pin_code: parsed.pin_code,
+                zoneLabel:
+                  parsed.locality || parsed.city
+                    ? `${parsed.locality || parsed.city}${parsed.state ? `, ${parsed.state}` : ''}`
+                    : `India (${roundedLat.toFixed(4)}, ${roundedLng.toFixed(4)})`,
+              },
+              { preserveExistingOnEmpty: true },
+            );
+
+            const incomplete =
+              !parsed.state || !parsed.city || !parsed.locality || !parsed.pin_code;
+            setMapNotice({
+              type: 'info',
+              message: incomplete
+                ? 'Coordinates captured inside India, but some address fields (such as PIN or locality) could not be resolved automatically. Review/complete the fields above, then confirm.'
+                : `Resolved ${parsed.locality || parsed.city}, ${parsed.state}. Verify the fields above and click "Confirm Selected Location".`,
+            });
+            return;
+          }
+        }
+
+        setMapNotice({
+          type: 'info',
+          message:
+            'Exact address could not be determined from map coordinates. India coordinates captured—please enter State, District, City/Village, Locality, and PIN manually, then confirm.',
+        });
+      } catch {
+        setMapNotice({
+          type: 'info',
+          message:
+            'Exact address could not be resolved (rural location or offline reverse geocoding). India coordinates captured—enter State, District, City/Village, Locality, and PIN manually, then confirm.',
+        });
+      }
     });
 
     mapRef.current = map;
@@ -164,7 +231,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     const q = searchQuery.trim();
     if (!q) return;
 
-    setConfirmed(false);
+    onConfirmChange(false);
     if (containsOverseasLocationText(q)) {
       setSearchResults([]);
       setMapNotice({
@@ -178,7 +245,6 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     setSearching(true);
     setMapNotice(null);
 
-    // 1. Instant local Indian city/locality/PIN preset matches
     const lowerQ = q.toLowerCase();
     const localMatches: ParsedIndianNominatimResult[] = INDIAN_PLACE_PRESETS.filter(
       (p) =>
@@ -201,7 +267,6 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
     }));
 
     try {
-      // 2. OpenStreetMap Nominatim strictly restricted to countrycodes=in
       const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&countrycodes=in&addressdetails=1&limit=6&q=${encodeURIComponent(
         q,
       )}`;
@@ -230,14 +295,13 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           setMapNotice({
             type: 'info',
             message:
-              'No matching Indian locations found. You can enter State, District, City, Locality, and PIN Code manually above.',
+              'No matching Indian locations found. Drop a pin inside India and enter State, District, City, Locality, and PIN Code manually above.',
           });
         }
       } else {
         setSearchResults(localMatches);
       }
     } catch {
-      // Offline / sandbox fallback uses validated local Indian matches
       setSearchResults(localMatches);
       if (localMatches.length === 0) {
         setMapNotice({
@@ -272,10 +336,10 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       zoneLabel: `${res.locality || res.city}, ${res.state}`,
     });
     setSearchResults([]);
-    setConfirmed(false);
+    onConfirmChange(false);
     setMapNotice({
       type: 'info',
-      message: `Selected ${res.city || res.locality}, ${res.state}. Adjust if needed and confirm.`,
+      message: `Selected ${res.city || res.locality}, ${res.state}. Review details above and click "Confirm Selected Location".`,
     });
   };
 
@@ -294,10 +358,10 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
       zoneLabel: `${preset.locality}, ${preset.city} (${preset.pin_code})`,
     });
     setSearchResults([]);
-    setConfirmed(false);
+    onConfirmChange(false);
     setMapNotice({
       type: 'info',
-      message: `Map centered on ${preset.city}, ${preset.state}. Click Confirm Selected Location or click the map to fine-tune.`,
+      message: `Map centered on ${preset.city}, ${preset.state}. Click "Confirm Selected Location" or click the map to fine-tune.`,
     });
   };
 
@@ -310,7 +374,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           </p>
           <p className="text-xs text-[#254B33]/85">
             Search Indian cities, localities, or 6-digit PIN codes, or click inside
-            India to drop a pin. Overseas locations are blocked.
+            India to drop a pin, then confirm your coordinates before submitting.
           </p>
         </div>
         {selected && (
@@ -432,7 +496,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
         </div>
       )}
 
-      {selected && (
+      {selected ? (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#B5D8C7] bg-white px-3 py-2 text-xs">
           <span className="text-[#254B33]">
             Selected pin: <strong className="text-[#06271A]">{selected.zoneLabel}</strong>
@@ -440,7 +504,7 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
           <button
             type="button"
             onClick={() => {
-              setConfirmed(true);
+              onConfirmChange(true);
               setMapNotice({
                 type: 'confirmed',
                 message: `Confirmed reporting coordinates inside India (${selected.lat.toFixed(
@@ -458,6 +522,17 @@ export const LocationPickerMap: React.FC<LocationPickerMapProps> = ({
             <span>{confirmed ? 'Location Confirmed' : 'Confirm Selected Location'}</span>
           </button>
         </div>
+      ) : (
+        <p className="text-xs text-[#254B33]/85">
+          No map pin selected yet. Search an Indian locality, click a Quick zoom city,
+          or drop a pin inside India on the map.
+        </p>
+      )}
+
+      {confirmError && (
+        <p role="alert" className="text-xs font-medium text-red-700">
+          {confirmError}
+        </p>
       )}
     </div>
   );

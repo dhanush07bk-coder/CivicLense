@@ -73,8 +73,21 @@ export interface ResolutionEvidence {
   completedAt: string;
 }
 
-export interface CivicIssue extends IndiaLocationFields {
+export interface PendingEvidenceItem {
   id: string;
+  initiativeId?: string;
+  evidenceType: 'before' | 'after' | 'followup';
+  imageUrl?: string;
+  imagePath: string;
+  summary: string;
+  submittedAt: string;
+}
+
+export interface CivicIssue extends IndiaLocationFields {
+  /** Public report code (e.g. CIV-2026-1001) */
+  id: string;
+  /** Database UUID primary key when backed by Supabase */
+  dbId?: string;
   category: IssueCategory;
   title: string;
   description: string;
@@ -82,6 +95,7 @@ export interface CivicIssue extends IndiaLocationFields {
   location: string;
   coordinates?: MapCoordinate;
   imageUrl?: string;
+  imagePath?: string;
   isAnonymous: boolean;
   /** Internal only: never exposed in public tracking views */
   reporterEmail?: string;
@@ -91,11 +105,13 @@ export interface CivicIssue extends IndiaLocationFields {
   timeline: StatusTimelineEntry[];
   followUpChecks: FollowUpCheck[];
   resolutionEvidence?: ResolutionEvidence;
+  pendingEvidence?: PendingEvidenceItem[];
   safetyAdvisoryShown?: boolean;
 }
 
 export interface PublicCivicIssue extends IndiaLocationFields {
   id: string;
+  dbId?: string;
   category: IssueCategory;
   title: string;
   description: string;
@@ -111,18 +127,30 @@ export interface PublicCivicIssue extends IndiaLocationFields {
   resolutionEvidence?: ResolutionEvidence;
 }
 
+export type InitiativeStatus = 'Open' | 'Completed' | 'Cancelled';
+
 export interface CommunityInitiative extends IndiaLocationFields {
   id: string;
   title: string;
   category: string;
   description: string;
   location: string;
+  /** ISO calendar date (YYYY-MM-DD) */
+  eventDate?: string;
+  /** 24-hour start time (HH:mm) */
+  startTime?: string;
+  /** 24-hour end time (HH:mm) */
+  endTime?: string;
   dateLabel: string;
   timeLabel: string;
   capacity: number;
   registeredCount: number;
-  status: 'Open' | 'Completed';
+  status: InitiativeStatus;
+  cancellationReason?: string;
+  linkedIssueIds?: string[];
+  linkedIssueDbIds?: string[];
   imageUrl?: string;
+  coverImagePath?: string;
   organizer: string;
   highlights: string[];
 }
@@ -130,8 +158,11 @@ export interface CommunityInitiative extends IndiaLocationFields {
 export interface VolunteerRegistration {
   id: string;
   initiativeId: string;
+  userId?: string;
   volunteerName: string;
   volunteerEmail: string;
+  registrationStatus?: 'Registered' | 'Cancelled';
+  attendanceStatus?: 'Pending' | 'Attended' | 'Absent';
   registeredAt: string;
 }
 
@@ -141,6 +172,9 @@ export interface UserAccount {
   email: string;
   role: UserRole;
   createdAt: string;
+  emailVerified?: boolean;
+  /** Demonstration-only credential field stored locally; not for production security */
+  demoPassword?: string;
 }
 
 export interface BeforeAfterCase {

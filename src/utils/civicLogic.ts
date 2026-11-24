@@ -1,7 +1,9 @@
 import {
-  CommunityInitiative,
+  BeforeAfterCase,
   CivicIssue,
+  CommunityInitiative,
   DashboardMetrics,
+  InitiativeStatus,
   IssueCategory,
   IssueStatus,
   LocalitySummary,
@@ -16,8 +18,17 @@ import {
   INDIA_COUNTRY_CODE,
   isCoordinateWithinIndia,
   isValidIndianState,
+  validateCoordinatesMatchIndianState,
   validateIndianPinCode,
+  validatePinMatchesIndianState,
 } from './indiaGeo';
+
+export const MAX_IMAGE_FILE_BYTES = 2 * 1024 * 1024; // 2 MB limit for browser persistence
+export const ALLOWED_IMAGE_MIME_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+] as const;
 
 export interface IssueSubmissionInput {
   category: IssueCategory | '';
@@ -32,6 +43,8 @@ export interface IssueSubmissionInput {
   latitude?: number;
   longitude?: number;
   coordinates?: MapCoordinate;
+  mapConfirmed?: boolean;
+  requireMapSelection?: boolean;
   imageUrl?: string;
   isAnonymous: boolean;
   reporterEmail?: string;
@@ -47,11 +60,20 @@ export interface InitiativeSubmissionInput {
   city: string;
   locality: string;
   pin_code: string;
-  dateLabel: string;
-  timeLabel: string;
+  eventDate?: string;
+  startTime?: string;
+  endTime?: string;
+  dateLabel?: string;
+  timeLabel?: string;
   capacity: number;
+  minCapacity?: number;
+  status?: InitiativeStatus;
+  cancellationReason?: string;
+  linkedIssueIds?: string[];
   latitude?: number;
   longitude?: number;
+  allowPastDate?: boolean;
+  referenceDate?: string;
 }
 
 export interface ValidationResult {
@@ -88,6 +110,92 @@ const VERIFIED_STATUSES = new Set<IssueStatus>([
   IssueStatus.Resolved,
   IssueStatus.Recurring,
 ]);
+
+export const ALLOWED_STATUS_TRANSITIONS: Record<
+  IssueStatus,
+  readonly IssueStatus[]
+> = {
+  [IssueStatus.Submitted]: [
+    IssueStatus.UnderVerification,
+    IssueStatus.Verified,
+    IssueStatus.Rejected,
+  ],
+  [IssueStatus.UnderVerification]: [
+    IssueStatus.Verified,
+    IssueStatus.Rejected,
+  ],
+  [IssueStatus.Verified]: [
+    IssueStatus.ActionInProgress,
+    IssueStatus.Resolved,
+    IssueStatus.Rejected,
+  ],
+  [IssueStatus.ActionInProgress]: [
+    IssueStatus.Resolved,
+    IssueStatus.Recurring,
+    IssueStatus.Verified,
+  ],
+  [IssueStatus.Resolved]: [IssueStatus.Recurring],
+  [IssueStatus.Recurring]: [
+    IssueStatus.ActionInProgress,
+    IssueStatus.Resolved,
+    IssueStatus.Verified,
+  ],
+  [IssueStatus.Rejected]: [IssueStatus.UnderVerification],
+};
+
+export function getAllowedNextStatuses(current: IssueStatus): IssueStatus[] {
+  return [current, ...(ALLOWED_STATUS_TRANSITIONS[current] ?? [])];
+}
+
+export function validateIssueStatusTransition(
+  fromStatus: IssueStatus,
+  toStatus: IssueStatus,
+): { valid: boolean; error?: string } {
+  if (fromStatus === toStatus) {
+    return { valid: true };
+  }
+  const allowed = ALLOWED_STATUS_TRANSITIONS[fromStatus] ?? [];
+  if (allowed.includes(toStatus)) {
+    return { valid: true };
+  }
+  return {
+    valid: false,
+    error: `Cannot transition directly from "${fromStatus}" to "${toStatus}". Allowed next statuses: ${
+      allowed.length > 0 ? allowed.join(', ') : 'none'
+    }.`,
+  };
+}
+
+export function validateImageFile(file: {
+  name: string;
+  type: string;
+  size: number;
+}): { valid: boolean; error?: string } {
+  if (
+    !ALLOWED_IMAGE_MIME_TYPES.includes(
+      file.type as (typeof ALLOWED_IMAGE_MIME_TYPES)[number],
+    )
+  ) {
+    return {
+      valid: false,
+      error: `Unsupported file format for "${file.name}". Upload a JPEG, PNG, or WebP image.`,
+    };
+  }
+  if (file.size <= 0) {
+    return {
+      valid: false,
+      error: 'Selected image file appears empty.',
+    };
+  }
+  if (file.size > MAX_IMAGE_FILE_BYTES) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+    return {
+      valid: false,
+      error: `Image is ${sizeMb} MB, exceeding the 2.0 MB limit for local browser storage.`,
+    };
+  }
+  return { valid: true };
+}
 
 export function generateReportId(existingIds: string[], now = new Date()): string {
   const year = now.getFullYear();
@@ -138,6 +246,44 @@ export function formatIndianAddress(fields: {
   return parts.join(', ');
 }
 
+export function formatIndianInitiativeSchedule(
+  eventDate?: string,
+  startTime?: string,
+  endTime?: string,
+): { dateLabel: string; timeLabel: string } {
+  let dateLabel = eventDate?.trim() || 'Upcoming Weekend';
+  if (eventDate && /^\d{4}-\d{2}-\d{2}$/.test(eventDate)) {
+    const [y, m, d] = eventDate.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    if (!Number.isNaN(dt.getTime())) {
+      dateLabel = dt.toLocaleDateString('en-IN', {
+        weekday: 'short',
+        month: 'short',
+        day: '2-digit',
+        year: 'numeric',
+        timeZone: 'UTC',
+      });
+    }
+  }
+
+  const formatTime12h = (hhmm: string): string => {
+    const [hhStr, mmStr] = hhmm.split(':');
+    const hh = Number(hhStr);
+    const mm = Number(mmStr);
+    if (!Number.isFinite(hh) || !Number.isFinite(mm)) return hhmm;
+    const suffix = hh >= 12 ? 'PM' : 'AM';
+    const hour12 = hh % 12 === 0 ? 12 : hh % 12;
+    return `${String(hour12).padStart(2, '0')}:${String(mm).padStart(2, '0')} ${suffix}`;
+  };
+
+  const timeLabel =
+    startTime && endTime
+      ? `${formatTime12h(startTime)} – ${formatTime12h(endTime)}`
+      : '08:00 AM – 11:00 AM';
+
+  return { dateLabel, timeLabel };
+}
+
 export function validateIndiaLocationFields(input: {
   country_code?: string;
   state: string;
@@ -154,7 +300,10 @@ export function validateIndiaLocationFields(input: {
     errors.country_code = 'Civilense operates exclusively within India (IN).';
   }
 
-  if (!input.state.trim() || !isValidIndianState(input.state)) {
+  const hasValidState = Boolean(
+    input.state.trim() && isValidIndianState(input.state),
+  );
+  if (!hasValidState) {
     errors.state = 'Please select a valid Indian State or Union Territory.';
   }
 
@@ -185,6 +334,11 @@ export function validateIndiaLocationFields(input: {
   if (!validateIndianPinCode(input.pin_code)) {
     errors.pin_code =
       'Enter a valid 6-digit Indian PIN code (starting with digits 1–8).';
+  } else if (
+    hasValidState &&
+    !validatePinMatchesIndianState(input.state, input.pin_code)
+  ) {
+    errors.pin_code = `PIN code ${input.pin_code.trim()} does not match ${input.state.trim()}. Please verify your State and PIN code.`;
   }
 
   if (input.latitude !== undefined || input.longitude !== undefined) {
@@ -195,6 +349,15 @@ export function validateIndiaLocationFields(input: {
     ) {
       errors.coordinates =
         'Selected map coordinates lie outside India and cannot be accepted.';
+    } else if (
+      hasValidState &&
+      !validateCoordinatesMatchIndianState(
+        input.state,
+        input.latitude,
+        input.longitude,
+      )
+    ) {
+      errors.coordinates = `Pinned map coordinates do not fall within ${input.state.trim()}. Adjust the map pin or update the selected State.`;
     }
   }
 
@@ -222,6 +385,9 @@ export function validateIssueSubmission(input: IssueSubmissionInput): Validation
     errors.description = 'Please provide at least 15 characters of neutral description.';
   }
 
+  const lat = input.latitude ?? input.coordinates?.lat;
+  const lng = input.longitude ?? input.coordinates?.lng;
+
   const locationErrors = validateIndiaLocationFields({
     country_code: input.country_code ?? INDIA_COUNTRY_CODE,
     state: input.state,
@@ -229,11 +395,22 @@ export function validateIssueSubmission(input: IssueSubmissionInput): Validation
     city: input.city,
     locality: input.locality,
     pin_code: input.pin_code,
-    latitude: input.latitude ?? input.coordinates?.lat,
-    longitude: input.longitude ?? input.coordinates?.lng,
+    latitude: lat,
+    longitude: lng,
   });
 
   Object.assign(errors, locationErrors);
+
+  if (input.requireMapSelection) {
+    if (lat === undefined || lng === undefined) {
+      errors.coordinates =
+        errors.coordinates ||
+        'Please select the reporting location inside India on the map.';
+    } else if (!input.mapConfirmed && !errors.coordinates) {
+      errors.mapConfirmed =
+        'Click "Confirm Selected Location" on the map to verify your pin before submitting.';
+    }
+  }
 
   return {
     valid: Object.keys(errors).length === 0,
@@ -265,6 +442,51 @@ export function validateInitiativeSubmission(
   });
   Object.assign(errors, locationErrors);
 
+  // Date & time validation when structured fields are used
+  const todayIso =
+    input.referenceDate || new Date().toISOString().slice(0, 10);
+
+  if (!input.eventDate || !/^\d{4}-\d{2}-\d{2}$/.test(input.eventDate)) {
+    errors.eventDate = 'Please choose a valid initiative date.';
+  } else if (
+    !input.allowPastDate &&
+    (input.status ?? 'Open') === 'Open' &&
+    input.eventDate < todayIso
+  ) {
+    errors.eventDate = 'Initiative date cannot be in the past.';
+  }
+
+  if (!input.startTime || !/^\d{2}:\d{2}$/.test(input.startTime)) {
+    errors.startTime = 'Please enter a valid start time.';
+  }
+  if (!input.endTime || !/^\d{2}:\d{2}$/.test(input.endTime)) {
+    errors.endTime = 'Please enter a valid end time.';
+  } else if (input.startTime && input.endTime <= input.startTime) {
+    errors.endTime = 'End time must be later than start time.';
+  }
+
+  if (
+    !Number.isInteger(input.capacity) ||
+    input.capacity < 5 ||
+    input.capacity > 500
+  ) {
+    errors.capacity = 'Volunteer capacity must be a whole number between 5 and 500.';
+  } else if (
+    input.minCapacity !== undefined &&
+    input.capacity < input.minCapacity
+  ) {
+    errors.capacity = `Capacity cannot be lower than the ${input.minCapacity} already-registered volunteers.`;
+  }
+
+  if (
+    input.status === 'Cancelled' &&
+    input.cancellationReason !== undefined &&
+    input.cancellationReason.trim().length < 5
+  ) {
+    errors.cancellationReason =
+      'Please provide a brief reason for cancelling this initiative.';
+  }
+
   return {
     valid: Object.keys(errors).length === 0,
     errors,
@@ -282,6 +504,9 @@ export function validateSignupForm(input: SignupInput): ValidationResult {
   }
   if (input.password.length < 8) {
     errors.password = 'Password must be at least 8 characters long.';
+  } else if (!/(?=.*[A-Za-z])(?=.*\d)/.test(input.password)) {
+    errors.password =
+      'Password must include at least one letter and one number.';
   }
   if (input.confirmPassword !== input.password) {
     errors.confirmPassword = 'Passwords do not match.';
@@ -310,6 +535,33 @@ export function validateLoginForm(input: LoginInput): ValidationResult {
     valid: Object.keys(errors).length === 0,
     errors,
   };
+}
+
+export function authenticateDemoUser(
+  users: UserAccount[],
+  email: string,
+  password: string,
+): { ok: boolean; user?: UserAccount; error?: string } {
+  const normalizedEmail = email.trim().toLowerCase();
+  const matched = users.find(
+    (u) => u.email.toLowerCase() === normalizedEmail,
+  );
+  if (!matched) {
+    return {
+      ok: false,
+      error:
+        'Invalid email or password for local demonstration accounts. Check credentials or create a demo profile.',
+    };
+  }
+  if (!matched.demoPassword || matched.demoPassword !== password) {
+    return {
+      ok: false,
+      error:
+        'Invalid password for this local demonstration account. Passwords are verified against the local demo list.',
+    };
+  }
+  const { demoPassword: _ignored, ...safeUser } = matched;
+  return { ok: true, user: safeUser };
 }
 
 export function assertValidIndiaIssueRecord(issue: CivicIssue): boolean {
@@ -363,7 +615,8 @@ export function createCivicIssueRecord(
 ): CivicIssue {
   const validation = validateIssueSubmission(input);
   if (!validation.valid) {
-    const firstError = Object.values(validation.errors)[0] ?? 'Invalid India issue record.';
+    const firstError =
+      Object.values(validation.errors)[0] ?? 'Invalid India issue record.';
     throw new Error(firstError);
   }
 
@@ -503,6 +756,25 @@ export function filterIssues(
     .map(toPublicIssueView);
 }
 
+export function filterCoordinatorQueue(
+  issues: CivicIssue[],
+  statusFilter: IssueStatus | 'All',
+): CivicIssue[] {
+  const indiaIssues = issues.filter(assertValidIndiaIssueRecord);
+  if (statusFilter === 'All') return indiaIssues;
+  return indiaIssues.filter((i) => i.status === statusFilter);
+}
+
+export function resolveActiveQueueIssue(
+  filteredQueue: CivicIssue[],
+  selectedIssueId: string,
+): CivicIssue | null {
+  if (filteredQueue.length === 0) return null;
+  return (
+    filteredQueue.find((i) => i.id === selectedIssueId) ?? filteredQueue[0]
+  );
+}
+
 export function applyIssueStatusUpdate(
   issue: CivicIssue,
   newStatus: IssueStatus,
@@ -516,6 +788,11 @@ export function applyIssueStatusUpdate(
   },
   now = new Date(),
 ): CivicIssue {
+  const transition = validateIssueStatusTransition(issue.status, newStatus);
+  if (!transition.valid) {
+    throw new Error(transition.error);
+  }
+
   const iso = now.toISOString();
   const trimmedNote = note.trim() || `Status updated to ${newStatus}.`;
   const actorRole = options?.actorRole ?? 'Civic Coordinator';
@@ -583,6 +860,20 @@ export interface VolunteerActionResult {
   registrations: VolunteerRegistration[];
 }
 
+export function syncInitiativeRegistrationCounts(
+  initiatives: CommunityInitiative[],
+  registrations: VolunteerRegistration[],
+): CommunityInitiative[] {
+  const counts = new Map<string, number>();
+  for (const reg of registrations) {
+    counts.set(reg.initiativeId, (counts.get(reg.initiativeId) ?? 0) + 1);
+  }
+  return initiatives.map((init) => ({
+    ...init,
+    registeredCount: counts.get(init.id) ?? 0,
+  }));
+}
+
 export function registerVolunteerForInitiative(
   initiatives: CommunityInitiative[],
   registrations: VolunteerRegistration[],
@@ -590,21 +881,28 @@ export function registerVolunteerForInitiative(
   user: Pick<UserAccount, 'fullName' | 'email'>,
   now = new Date(),
 ): VolunteerActionResult {
-  const target = initiatives.find((item) => item.id === initiativeId);
+  const syncedInitiatives = syncInitiativeRegistrationCounts(
+    initiatives,
+    registrations,
+  );
+  const target = syncedInitiatives.find((item) => item.id === initiativeId);
   if (!target) {
     return {
       ok: false,
       message: 'Initiative not found.',
-      initiatives,
+      initiatives: syncedInitiatives,
       registrations,
     };
   }
 
-  if (target.status === 'Completed') {
+  if (target.status === 'Completed' || target.status === 'Cancelled') {
     return {
       ok: false,
-      message: 'This initiative has already been completed.',
-      initiatives,
+      message:
+        target.status === 'Cancelled'
+          ? 'This initiative has been cancelled.'
+          : 'This initiative has already been completed.',
+      initiatives: syncedInitiatives,
       registrations,
     };
   }
@@ -620,7 +918,7 @@ export function registerVolunteerForInitiative(
     return {
       ok: false,
       message: 'You are already registered for this community initiative.',
-      initiatives,
+      initiatives: syncedInitiatives,
       registrations,
     };
   }
@@ -629,7 +927,7 @@ export function registerVolunteerForInitiative(
     return {
       ok: false,
       message: 'Volunteer capacity for this initiative is currently full.',
-      initiatives,
+      initiatives: syncedInitiatives,
       registrations,
     };
   }
@@ -642,15 +940,15 @@ export function registerVolunteerForInitiative(
     registeredAt: now.toISOString(),
   };
 
+  const nextRegistrations = [newRegistration, ...registrations];
   return {
     ok: true,
     message: `Registration confirmed for ${target.title}.`,
-    initiatives: initiatives.map((item) =>
-      item.id === initiativeId
-        ? { ...item, registeredCount: item.registeredCount + 1 }
-        : item,
+    initiatives: syncInitiativeRegistrationCounts(
+      syncedInitiatives,
+      nextRegistrations,
     ),
-    registrations: [newRegistration, ...registrations],
+    registrations: nextRegistrations,
   };
 }
 
@@ -671,27 +969,79 @@ export function cancelVolunteerRegistration(
     return {
       ok: false,
       message: 'No active registration found for this activity.',
-      initiatives,
+      initiatives: syncInitiativeRegistrationCounts(initiatives, registrations),
       registrations,
     };
   }
 
   const target = initiatives.find((item) => item.id === initiativeId);
+  const nextRegistrations = registrations.filter((reg) => reg.id !== existing.id);
 
   return {
     ok: true,
     message: `Registration cancelled for ${target?.title ?? 'initiative'}.`,
-    initiatives: initiatives.map((item) =>
-      item.id === initiativeId
-        ? { ...item, registeredCount: Math.max(0, item.registeredCount - 1) }
-        : item,
-    ),
-    registrations: registrations.filter((reg) => reg.id !== existing.id),
+    initiatives: syncInitiativeRegistrationCounts(initiatives, nextRegistrations),
+    registrations: nextRegistrations,
   };
 }
 
 export function isIssueVerifiedOutcome(status: IssueStatus): boolean {
   return VERIFIED_STATUSES.has(status);
+}
+
+export function deriveVerifiedBeforeAfterCases(
+  issues: CivicIssue[],
+  initiatives: CommunityInitiative[],
+  locationFilter?: { state?: string | 'All'; city?: string | 'All' },
+): BeforeAfterCase[] {
+  const stateFilter = locationFilter?.state ?? 'All';
+  const cityFilter = locationFilter?.city ?? 'All';
+
+  return issues
+    .filter((issue) => {
+      if (!assertValidIndiaIssueRecord(issue)) return false;
+      if (stateFilter !== 'All' && issue.state !== stateFilter) return false;
+      if (cityFilter !== 'All' && issue.city !== cityFilter) return false;
+      return (
+        issue.status === IssueStatus.Resolved &&
+        Boolean(issue.resolutionEvidence?.approvedByCoordinator) &&
+        Boolean(issue.resolutionEvidence?.beforeImageUrl) &&
+        Boolean(issue.resolutionEvidence?.afterImageUrl)
+      );
+    })
+    .map((issue) => {
+      const linkedInitiativeVolunteers = initiatives
+        .filter((init) => init.linkedIssueIds?.includes(issue.id))
+        .reduce((sum, init) => sum + init.registeredCount, 0);
+
+      let completedDate = issue.updatedAt.slice(0, 10);
+      try {
+        completedDate = new Date(
+          issue.resolutionEvidence?.completedAt ?? issue.updatedAt,
+        ).toLocaleDateString('en-IN', {
+          month: 'short',
+          day: '2-digit',
+          year: 'numeric',
+        });
+      } catch {
+        // fallback to ISO slice
+      }
+
+      return {
+        id: `ba-${issue.id}`,
+        title: issue.title,
+        state: issue.state,
+        city: issue.city,
+        locality: issue.locality,
+        pin_code: issue.pin_code,
+        issueId: issue.id,
+        completedDate,
+        beforeImageUrl: issue.resolutionEvidence!.beforeImageUrl!,
+        afterImageUrl: issue.resolutionEvidence!.afterImageUrl!,
+        summary: issue.resolutionEvidence!.summary,
+        volunteersInvolved: linkedInitiativeVolunteers,
+      };
+    });
 }
 
 export function computeDashboardMetrics(

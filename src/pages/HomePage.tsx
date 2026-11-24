@@ -1,19 +1,26 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ArrowRight,
   Calendar,
   MapPin,
   Users,
 } from 'lucide-react';
+import { SEED_HERO_IMAGE } from '../data/seedData';
 import {
-  HOME_DEMO_STATS,
-  SEED_HERO_IMAGE,
-} from '../data/seedData';
-import { CommunityInitiative, PageRoute } from '../types/civic';
+  CivicIssue,
+  CommunityInitiative,
+  PageRoute,
+  VolunteerRegistration,
+} from '../types/civic';
+import { computeDashboardMetrics } from '../utils/civicLogic';
 import { ResilientImage } from '../components/ResilientImage';
 
 interface HomePageProps {
+  issues: CivicIssue[];
   initiatives: CommunityInitiative[];
+  registrations: VolunteerRegistration[];
+  isSupabaseMode?: boolean;
+  loading?: boolean;
   onNavigate: (route: PageRoute) => void;
   onSelectInitiative: (initiativeId: string) => void;
 }
@@ -46,11 +53,50 @@ const HOW_IT_WORKS_STEPS = [
 ];
 
 export const HomePage: React.FC<HomePageProps> = ({
+  issues,
   initiatives,
+  registrations,
+  isSupabaseMode = false,
+  loading = false,
   onNavigate,
   onSelectInitiative,
 }) => {
-  const featuredInitiatives = initiatives.filter((i) => i.status === 'Open').slice(0, 3);
+  const featuredInitiatives = initiatives
+    .filter((i) => i.status === 'Open')
+    .slice(0, 3);
+
+  const dynamicStats = useMemo(() => {
+    const metrics = computeDashboardMetrics(issues, initiatives);
+    const openCount = initiatives.filter((i) => i.status === 'Open').length;
+    const totalRegistrations = isSupabaseMode
+      ? metrics.activeVolunteers
+      : registrations.length;
+
+    return [
+      {
+        value: loading ? '…' : String(metrics.totalReports),
+        label: 'Reports Submitted',
+        detail: `${metrics.unverifiedSubmittedCount} currently awaiting verification across India`,
+      },
+      {
+        value: loading ? '…' : String(metrics.verifiedReports),
+        label: 'Issues Verified',
+        detail: `${metrics.resolvedIssues} resolved with coordinator review`,
+      },
+      {
+        value: loading ? '…' : String(totalRegistrations),
+        label: 'Volunteer Registrations',
+        detail: isSupabaseMode
+          ? 'Confirmed registrations in Supabase database'
+          : 'Confirmed local sign-ups in active browser records',
+      },
+      {
+        value: loading ? '…' : String(initiatives.length),
+        label: 'Community Initiatives',
+        detail: `${openCount} open for sign-up · ${metrics.completedInitiatives} completed`,
+      },
+    ];
+  }, [issues, initiatives, registrations.length, isSupabaseMode, loading]);
 
   return (
     <div>
@@ -107,19 +153,23 @@ export const HomePage: React.FC<HomePageProps> = ({
             </div>
           </div>
 
-          {/* Demo Impact Statistics Strip */}
+          {/* Live Snapshot Strip */}
           <div className="mt-12 rounded-2xl border border-[#B5D8C7] bg-[#F5FAF7] p-6 sm:p-8">
             <div className="mb-5 flex flex-wrap items-center justify-between gap-2 border-b border-[#B5D8C7]/70 pb-3">
               <h2 className="font-display text-sm font-semibold text-[#06271A]">
-                Neighbourhood Demonstration Snapshot
+                {isSupabaseMode
+                  ? 'Live India Civic Snapshot'
+                  : 'Neighbourhood Demonstration Snapshot'}
               </h2>
               <span className="text-xs text-[#254B33]/80">
-                Sample Prototype Data · Updated for Version 0 Preview
+                {isSupabaseMode
+                  ? 'Calculated from Supabase PostgreSQL Records'
+                  : 'Local Demo Mode (Browser Storage Fallback · Connect Supabase Env Vars for Production)'}
               </span>
             </div>
 
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-              {HOME_DEMO_STATS.map((stat) => (
+              {dynamicStats.map((stat) => (
                 <div key={stat.label} className="space-y-1">
                   <p className="font-display text-3xl font-bold text-[#06271A] tabular-nums">
                     {stat.value}
@@ -249,10 +299,7 @@ export const HomePage: React.FC<HomePageProps> = ({
 
                     <button
                       type="button"
-                      onClick={() => {
-                        onSelectInitiative(activity.id);
-                        onNavigate('community');
-                      }}
+                      onClick={() => onSelectInitiative(activity.id)}
                       className="inline-flex min-h-[40px] w-full items-center justify-center rounded-lg border border-[#254B33] bg-white px-4 py-2 text-sm font-semibold text-[#254B33] transition-colors hover:bg-[#254B33] hover:text-white"
                     >
                       Join or View Details

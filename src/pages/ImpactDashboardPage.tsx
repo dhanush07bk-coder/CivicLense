@@ -9,15 +9,17 @@ import {
 import {
   assertValidIndiaIssueRecord,
   computeDashboardMetrics,
+  deriveVerifiedBeforeAfterCases,
 } from '../utils/civicLogic';
-import { SEED_BEFORE_AFTER_CASES } from '../data/seedData';
 import { BeforeAfterSlider } from '../components/BeforeAfterSlider';
 import { ResilientImage } from '../components/ResilientImage';
 import { StatusBadge } from '../components/StatusBadge';
+import { IndiaLocationFilterBar } from '../components/IndiaLocationFilterBar';
 
 interface ImpactDashboardPageProps {
   issues: CivicIssue[];
   initiatives: CommunityInitiative[];
+  isSupabaseMode?: boolean;
   onNavigate: (route: PageRoute) => void;
   onInspectIssue: (issueId: string) => void;
 }
@@ -35,14 +37,13 @@ const STATUS_BAR_COLORS: Record<IssueStatus, string> = {
 export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
   issues,
   initiatives,
+  isSupabaseMode = false,
   onNavigate,
   onInspectIssue,
 }) => {
   const [stateFilter, setStateFilter] = useState<string>('All');
   const [cityFilter, setCityFilter] = useState<string>('All');
-  const [selectedComparisonId, setSelectedComparisonId] = useState(
-    SEED_BEFORE_AFTER_CASES[0].id,
-  );
+  const [selectedComparisonId, setSelectedComparisonId] = useState<string>('');
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
 
   const indiaIssues = useMemo(
@@ -72,9 +73,19 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
     [indiaIssues, initiatives, stateFilter, cityFilter],
   );
 
+  const beforeAfterCases = useMemo(
+    () =>
+      deriveVerifiedBeforeAfterCases(indiaIssues, initiatives, {
+        state: stateFilter,
+        city: cityFilter,
+      }),
+    [indiaIssues, initiatives, stateFilter, cityFilter],
+  );
+
   const activeCase =
-    SEED_BEFORE_AFTER_CASES.find((c) => c.id === selectedComparisonId) ??
-    SEED_BEFORE_AFTER_CASES[0];
+    beforeAfterCases.find((c) => c.id === selectedComparisonId) ??
+    beforeAfterCases[0] ??
+    null;
 
   const recentInterventions = useMemo(
     () =>
@@ -99,7 +110,7 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
 
   return (
     <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6 lg:py-12 space-y-10">
-      {/* Header & Demonstration Notice */}
+      {/* Header & Data Source Notice */}
       <div className="space-y-4">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-2">
@@ -110,9 +121,9 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
               Community Impact Dashboard
             </h1>
             <p className="max-w-2xl text-sm text-[#254B33]">
-              Live summary computed from India-only demonstration records,
-              explicitly separating unverified citizen submissions from
-              coordinator-verified civic outcomes.
+              {isSupabaseMode
+                ? 'Live summary computed directly from verified Supabase database records, separating unverified citizen submissions from coordinator-verified outcomes.'
+                : 'Summary computed from India-only local demonstration records, separating unverified citizen submissions from coordinator-verified civic outcomes.'}
             </p>
           </div>
 
@@ -126,67 +137,24 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
         </div>
 
         {/* Indian State & City Filters */}
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[#B5D8C7] bg-white p-4">
-          <div className="flex-1 min-w-[200px]">
-            <label
-              htmlFor="impact-state-filter"
-              className="mb-1 block text-[11px] font-semibold text-[#5E9185]"
-            >
-              Filter by Indian State / UT
-            </label>
-            <select
-              id="impact-state-filter"
-              value={stateFilter}
-              onChange={(e) => {
-                setStateFilter(e.target.value);
-                setCityFilter('All');
-              }}
-              className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2 text-sm text-[#06271A]"
-            >
-              <option value="All">All India</option>
-              {availableStates.map((st) => (
-                <option key={st} value={st}>
-                  {st}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex-1 min-w-[200px]">
-            <label
-              htmlFor="impact-city-filter"
-              className="mb-1 block text-[11px] font-semibold text-[#5E9185]"
-            >
-              Filter by Indian City
-            </label>
-            <select
-              id="impact-city-filter"
-              value={cityFilter}
-              onChange={(e) => setCityFilter(e.target.value)}
-              className="w-full rounded-lg border border-[#9CCCCC] bg-white px-3 py-2 text-sm text-[#06271A]"
-            >
-              <option value="All">All Cities</option>
-              {availableCities.map((ct) => (
-                <option key={ct} value={ct}>
-                  {ct}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {(stateFilter !== 'All' || cityFilter !== 'All') && (
-            <button
-              type="button"
-              onClick={() => {
-                setStateFilter('All');
-                setCityFilter('All');
-              }}
-              className="mt-4 text-xs font-semibold text-[#254B33] underline decoration-[#5E9185] underline-offset-4"
-            >
-              Reset to All India
-            </button>
-          )}
-        </div>
+        <IndiaLocationFilterBar
+          showLabels
+          stateFilter={stateFilter}
+          cityFilter={cityFilter}
+          availableStates={availableStates}
+          availableCities={availableCities}
+          onStateChange={setStateFilter}
+          onCityChange={setCityFilter}
+          onReset={() => {
+            setStateFilter('All');
+            setCityFilter('All');
+          }}
+          stateId="impact-state-filter"
+          cityId="impact-city-filter"
+          allStatesLabel="All India"
+          allCitiesLabel="All Cities"
+          resetLabel="Reset to All India"
+        />
 
         <div
           role="note"
@@ -195,11 +163,13 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
           <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#254B33]" aria-hidden="true" />
           <p>
             <strong className="text-[#06271A]">
-              India Demonstration Data Notice:
+              {isSupabaseMode
+                ? 'Live Database Verification Notice:'
+                : 'Local Demonstration Mode Notice:'}
             </strong>{' '}
-            Figures below combine Indian sample records (Bengaluru, Mysuru, Chennai,
-            Hyderabad, Kochi, Pune, New Delhi) with any reports or volunteer
-            registrations added in this browser session.{' '}
+            {isSupabaseMode
+              ? 'All KPIs, locality summaries, and before-and-after evidence below reflect real database records in Supabase. '
+              : 'Supabase environment variables are not configured in this preview; figures combine local Indian sample records with browser-session updates. '}
             <strong className="text-[#06271A]">Submitted Reports</strong> reflect
             raw observations ({metrics.unverifiedSubmittedCount} currently awaiting
             verification), whereas{' '}
@@ -402,79 +372,95 @@ export const ImpactDashboardPage: React.FC<ImpactDashboardPageProps> = ({
         </div>
       </div>
 
-      {/* Before-and-After Image Comparison */}
+      {/* Dynamic Before-and-After Image Comparison */}
       <div className="rounded-2xl border border-[#B5D8C7] bg-white p-6 sm:p-8 space-y-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
             <p className="text-xs font-semibold tracking-wider text-[#5E9185] uppercase">
-              Verified Visual Evidence · India
+              Verified Visual Evidence · Derived from Resolved Records
             </p>
             <h2 className="font-display text-2xl font-bold text-[#06271A]">
               Before &amp; After Restoration Comparison
             </h2>
           </div>
 
-          <div className="flex flex-wrap gap-2">
-            {SEED_BEFORE_AFTER_CASES.map((item) => (
+          {beforeAfterCases.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {beforeAfterCases.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setSelectedComparisonId(item.id)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    activeCase?.id === item.id
+                      ? 'border-[#254B33] bg-[#254B33] text-white'
+                      : 'border-[#B5D8C7] bg-[#F5FAF7] text-[#254B33] hover:bg-[#B5D8C7]/35'
+                  }`}
+                >
+                  {item.issueId} · {item.city}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {activeCase ? (
+          <div className="grid items-center gap-8 lg:grid-cols-12">
+            <div className="lg:col-span-7">
+              <BeforeAfterSlider
+                beforeUrl={activeCase.beforeImageUrl}
+                afterUrl={activeCase.afterImageUrl}
+                title={activeCase.title}
+                beforeLabel="Before (Reported Condition)"
+                afterLabel="After (Verified Restoration)"
+              />
+            </div>
+
+            <div className="space-y-4 lg:col-span-5">
+              <div className="space-y-1">
+                <p className="font-mono-tabular text-xs font-semibold text-[#5E9185]">
+                  {activeCase.issueId} · Completed {activeCase.completedDate}
+                </p>
+                <h3 className="font-display text-xl font-bold text-[#06271A]">
+                  {activeCase.title}
+                </h3>
+              </div>
+              <p className="text-sm leading-relaxed text-[#254B33]">
+                {activeCase.summary}
+              </p>
+              <div className="rounded-xl border border-[#B5D8C7] bg-[#F5FAF7] p-4 text-xs text-[#254B33] space-y-1">
+                <p>
+                  <strong className="text-[#06271A]">Locality:</strong>{' '}
+                  {activeCase.locality}, {activeCase.city}, {activeCase.state} —{' '}
+                  <span className="font-mono-tabular">{activeCase.pin_code}</span>
+                </p>
+                <p className="tabular-nums">
+                  <strong className="text-[#06271A]">Linked Volunteers:</strong>{' '}
+                  {activeCase.volunteersInvolved > 0
+                    ? `${activeCase.volunteersInvolved} registered members`
+                    : 'Ward crew & local verification'}
+                </p>
+              </div>
               <button
-                key={item.id}
                 type="button"
-                onClick={() => setSelectedComparisonId(item.id)}
-                className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  activeCase.id === item.id
-                    ? 'border-[#254B33] bg-[#254B33] text-white'
-                    : 'border-[#B5D8C7] bg-[#F5FAF7] text-[#254B33] hover:bg-[#B5D8C7]/35'
-                }`}
+                onClick={() => onInspectIssue(activeCase.issueId)}
+                className="inline-flex min-h-[40px] items-center rounded-lg border border-[#254B33] bg-white px-4 py-2 text-xs font-semibold text-[#254B33] transition-colors hover:bg-[#254B33] hover:text-white"
               >
-                {item.city}, {item.state}
+                Inspect Linked Report Timeline
               </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid items-center gap-8 lg:grid-cols-12">
-          <div className="lg:col-span-7">
-            <BeforeAfterSlider
-              beforeUrl={activeCase.beforeImageUrl}
-              afterUrl={activeCase.afterImageUrl}
-              title={activeCase.title}
-              beforeLabel="Before (Reported Condition)"
-              afterLabel="After (Verified Restoration)"
-            />
-          </div>
-
-          <div className="space-y-4 lg:col-span-5">
-            <div className="space-y-1">
-              <p className="font-mono-tabular text-xs font-semibold text-[#5E9185]">
-                {activeCase.issueId} · Completed {activeCase.completedDate}
-              </p>
-              <h3 className="font-display text-xl font-bold text-[#06271A]">
-                {activeCase.title}
-              </h3>
             </div>
-            <p className="text-sm leading-relaxed text-[#254B33]">
-              {activeCase.summary}
+          </div>
+        ) : (
+          <div className="rounded-xl border border-[#B5D8C7]/70 bg-[#F8FBF9] p-8 text-center space-y-2">
+            <p className="text-sm font-semibold text-[#06271A]">
+              No coordinator-approved before/after photo pairs in this filter scope
             </p>
-            <div className="rounded-xl border border-[#B5D8C7] bg-[#F5FAF7] p-4 text-xs text-[#254B33] space-y-1">
-              <p>
-                <strong className="text-[#06271A]">Locality:</strong>{' '}
-                {activeCase.locality}, {activeCase.city}, {activeCase.state} —{' '}
-                <span className="font-mono-tabular">{activeCase.pin_code}</span>
-              </p>
-              <p className="tabular-nums">
-                <strong className="text-[#06271A]">Volunteers Involved:</strong>{' '}
-                {activeCase.volunteersInvolved} community members
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => onInspectIssue(activeCase.issueId)}
-              className="inline-flex min-h-[40px] items-center rounded-lg border border-[#254B33] bg-white px-4 py-2 text-xs font-semibold text-[#254B33] transition-colors hover:bg-[#254B33] hover:text-white"
-            >
-              Inspect Linked Report Timeline
-            </button>
+            <p className="text-xs text-[#254B33]/85">
+              Reset the State/City filter above or resolve an issue with uploaded
+              before-and-after evidence in the Coordinator Portal.
+            </p>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Locality Summaries & Recent Interventions */}

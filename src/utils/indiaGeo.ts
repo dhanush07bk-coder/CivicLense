@@ -477,6 +477,127 @@ export function validateAndParseNominatimIndiaResult(
   };
 }
 
+/**
+ * 2-digit PIN prefix ranges mapped to each Indian State and Union Territory
+ * per India Post postal circles.
+ */
+const STATE_PIN_PREFIXES: Record<string, ReadonlyArray<readonly [number, number]>> = {
+  'Andaman and Nicobar Islands': [[74, 74]],
+  'Andhra Pradesh': [[51, 53]],
+  'Arunachal Pradesh': [[79, 79]],
+  Assam: [[78, 78]],
+  Bihar: [[80, 85]],
+  Chandigarh: [[16, 16]],
+  Chhattisgarh: [[49, 49]],
+  'Dadra and Nagar Haveli and Daman and Diu': [[39, 39]],
+  Delhi: [[11, 11]],
+  Goa: [[40, 40]],
+  Gujarat: [[36, 39]],
+  Haryana: [[12, 13]],
+  'Himachal Pradesh': [[17, 17]],
+  'Jammu and Kashmir': [[18, 19]],
+  Jharkhand: [[81, 83]],
+  Karnataka: [[56, 59]],
+  Kerala: [[67, 69]],
+  Ladakh: [[19, 19]],
+  Lakshadweep: [[68, 68]],
+  'Madhya Pradesh': [[45, 48]],
+  Maharashtra: [[40, 44]],
+  Manipur: [[79, 79]],
+  Meghalaya: [[79, 79]],
+  Mizoram: [[79, 79]],
+  Nagaland: [[79, 79]],
+  Odisha: [[75, 77]],
+  Puducherry: [
+    [53, 53],
+    [60, 60],
+    [67, 67],
+  ],
+  Punjab: [[14, 16]],
+  Rajasthan: [[30, 34]],
+  Sikkim: [[73, 73]],
+  'Tamil Nadu': [[60, 64]],
+  Telangana: [[50, 50]],
+  Tripura: [[79, 79]],
+  'Uttar Pradesh': [[20, 28]],
+  Uttarakhand: [[24, 26]],
+  'West Bengal': [[70, 74]],
+};
+
+export function validatePinMatchesIndianState(state: string, pin: string): boolean {
+  if (!isValidIndianState(state) || !validateIndianPinCode(pin)) {
+    return false;
+  }
+  const canonicalState = INDIAN_STATES_AND_UTS.find(
+    (s) => s.toLowerCase() === state.trim().toLowerCase(),
+  );
+  if (!canonicalState) return false;
+  const ranges = STATE_PIN_PREFIXES[canonicalState];
+  if (!ranges) return true;
+
+  const prefix = Number(pin.trim().slice(0, 2));
+  return ranges.some(([min, max]) => prefix >= min && prefix <= max);
+}
+
+/**
+ * Generous geographic bounding boxes [minLat, maxLat, minLng, maxLng] per Indian State/UT
+ * to catch clear state-vs-coordinate mismatches without rejecting valid rural/border areas.
+ */
+const STATE_BOUNDS: Record<string, readonly [number, number, number, number]> = {
+  'Andaman and Nicobar Islands': [6.5, 14.0, 92.0, 94.5],
+  'Andhra Pradesh': [12.3, 19.3, 76.5, 85.0],
+  'Arunachal Pradesh': [26.4, 29.6, 91.4, 97.5],
+  Assam: [24.0, 28.2, 89.5, 96.2],
+  Bihar: [24.1, 27.7, 83.2, 88.4],
+  Chandigarh: [30.5, 30.9, 76.6, 77.0],
+  Chhattisgarh: [17.7, 24.3, 80.1, 84.6],
+  'Dadra and Nagar Haveli and Daman and Diu': [20.0, 21.0, 70.8, 73.4],
+  Delhi: [28.3, 28.95, 76.75, 77.45],
+  Goa: [14.8, 15.9, 73.5, 74.5],
+  Gujarat: [20.0, 24.9, 68.0, 74.6],
+  Haryana: [27.5, 31.0, 74.3, 77.7],
+  'Himachal Pradesh': [30.3, 33.3, 75.5, 79.1],
+  'Jammu and Kashmir': [32.2, 35.4, 73.5, 77.5],
+  Jharkhand: [21.9, 25.5, 83.2, 87.95],
+  Karnataka: [11.4, 18.6, 74.0, 78.7],
+  Kerala: [8.1, 12.9, 74.7, 77.5],
+  Ladakh: [32.2, 37.2, 75.3, 79.5],
+  Lakshadweep: [8.0, 12.5, 71.5, 74.1],
+  'Madhya Pradesh': [21.0, 27.0, 73.9, 82.9],
+  Maharashtra: [15.5, 22.2, 72.5, 81.0],
+  Manipur: [23.7, 25.8, 92.9, 94.9],
+  Meghalaya: [25.0, 26.2, 89.8, 92.9],
+  Mizoram: [21.8, 24.6, 92.1, 93.6],
+  Nagaland: [25.1, 27.1, 93.2, 95.3],
+  Odisha: [17.7, 22.7, 81.3, 87.6],
+  Puducherry: [10.7, 17.0, 75.4, 82.4],
+  Punjab: [29.4, 32.6, 73.8, 77.0],
+  Rajasthan: [23.0, 30.3, 69.4, 78.4],
+  Sikkim: [27.0, 28.2, 87.9, 89.0],
+  'Tamil Nadu': [8.0, 13.7, 76.1, 80.5],
+  Telangana: [15.7, 20.0, 77.1, 81.5],
+  Tripura: [22.8, 24.6, 91.0, 92.5],
+  'Uttar Pradesh': [23.8, 30.6, 77.0, 84.8],
+  Uttarakhand: [28.6, 31.6, 77.5, 81.2],
+  'West Bengal': [21.4, 27.3, 85.8, 90.0],
+};
+
+export function validateCoordinatesMatchIndianState(
+  state: string,
+  lat: number,
+  lng: number,
+): boolean {
+  if (!isCoordinateWithinIndia(lat, lng)) return false;
+  const canonicalState = INDIAN_STATES_AND_UTS.find(
+    (s) => s.toLowerCase() === state.trim().toLowerCase(),
+  );
+  if (!canonicalState) return true;
+  const box = STATE_BOUNDS[canonicalState];
+  if (!box) return true;
+  const [minLat, maxLat, minLng, maxLng] = box;
+  return lat >= minLat && lat <= maxLat && lng >= minLng && lng <= maxLng;
+}
+
 export function findNearestIndianPreset(
   lat: number,
   lng: number,
